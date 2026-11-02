@@ -82,9 +82,9 @@ class TypeDelegate(QStyledItemDelegate):
 
 class MappingDialog(QDialog):
     def __init__(self, headers, current, parent=None):
-        super().__init__(parent);self.setWindowTitle('Worksheet / 列映射');self.resize(490,280)
+        super().__init__(parent);self.setWindowTitle('Worksheet Column Mapping');self.resize(490,280)
         layout=QFormLayout(self);self.fields={}
-        for key,label in [('name','姓名 / Participant name'),('type','类别 / Type'),('phone','电话 / WhatsApp'),('date','日期 / Date')]:
+        for key,label in [('name','Participant name'),('type','Type'),('phone','WhatsApp phone'),('date','Date')]:
             box=QComboBox();box.addItems(['(Not configured)']+headers)
             guess=next((h for h in headers if norm(h) in ALIASES[key]),'')
             chosen=current.get(key,guess)
@@ -92,8 +92,8 @@ class MappingDialog(QDialog):
             self.fields[key]=box;layout.addRow(label,box)
         self.default=QComboBox();self.default.addItems(['Use Type column','volunteer','donor','beneficiary'])
         self.default.setCurrentText(current.get('default_type','Use Type column'))
-        layout.addRow('整张表默认类别',self.default)
-        label=QLabel('当表格没有 Type 列时，可为整张表选择类别。\n困难家庭不会生成感谢状。');label.setWordWrap(True);layout.addRow(label)
+        layout.addRow('Default worksheet type',self.default)
+        label=QLabel('Choose a default type if the worksheet has no Type column.\nBeneficiaries do not receive certificates.');label.setWordWrap(True);layout.addRow(label)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);layout.addRow(buttons)
     def value(self):
@@ -103,55 +103,55 @@ class MappingDialog(QDialog):
 
 class TemplateDialog(QDialog):
     def __init__(self, cfg, parent=None):
-        super().__init__(parent);self.setWindowTitle('感谢状模板 / Certificate templates');self.resize(760,340)
+        super().__init__(parent);self.setWindowTitle('Certificate Templates');self.resize(760,340)
         form=QFormLayout(self);self.paths={};self.tokens={}
-        for k,label in [('volunteer','志愿者'),('donor','捐赠者')]:
+        for k,label in [('volunteer','Volunteer'),('donor','Donor')]:
             row=QWidget();line=QHBoxLayout(row);line.setContentsMargins(0,0,0,0)
-            path=QLineEdit(cfg.get('templates',{}).get(k,{}).get('path',''));button=QPushButton('选择 PPTX')
+            path=QLineEdit(cfg.get('templates',{}).get(k,{}).get('path',''));button=QPushButton('Choose PPTX')
             line.addWidget(path);line.addWidget(button);button.clicked.connect(lambda checked=False,key=k:self.choose(key))
             self.paths[k]=path;form.addRow(label+' PPTX',row)
             marker=QLineEdit(cfg.get('templates',{}).get(k,{}).get('marker','auto'));self.tokens[k]=marker
-            form.addRow(label+'姓名标记',marker)
-        self.engine=QComboBox();self.engine.addItems(['auto','powerpoint','libreoffice']);self.engine.setCurrentText(cfg.get('engine','auto'));form.addRow('PDF 转换器',self.engine)
-        self.soffice=QLineEdit(cfg.get('soffice',''));form.addRow('LibreOffice 路径（可留空）',self.soffice)
-        label=QLabel('auto 自动匹配 name / Name / {{NAME}}，支持跨字体段落。\n也可填写模板中的精确文字。姓名必须是可编辑文字，图片中的姓名无法替换。\nWindows auto 使用 PowerPoint；Linux/macOS 使用 LibreOffice。');label.setWordWrap(True);form.addRow(label)
+            form.addRow(label+' name marker',marker)
+        self.engine=QComboBox();self.engine.addItems(['auto','powerpoint','libreoffice']);self.engine.setCurrentText(cfg.get('engine','auto'));form.addRow('PDF converter',self.engine)
+        self.soffice=QLineEdit(cfg.get('soffice',''));form.addRow('LibreOffice path (optional)',self.soffice)
+        label=QLabel('auto matches name / Name / {{NAME}}, including markers split across text runs.\nYou can also enter the exact text to replace. Names must be editable text, not an image.\nOn Windows, auto uses PowerPoint; on Linux/macOS, it uses LibreOffice.');label.setWordWrap(True);form.addRow(label)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.validate);buttons.rejected.connect(self.reject);form.addRow(buttons)
     def choose(self,k):
-        path,_=QFileDialog.getOpenFileName(self,'选择 PPTX',str(ROOT/'templates'),'PowerPoint (*.pptx)')
+        path,_=QFileDialog.getOpenFileName(self,'Choose PPTX',str(ROOT/'templates'),'PowerPoint (*.pptx)',options=QFileDialog.Option.DontUseNativeDialog)
         if path:
             self.paths[k].setText(path)
             try:
                 found=markers(path)
-                QMessageBox.information(self,'姓名标记检测','检测到：'+', '.join(found) if found else '没有检测到标准标记，请填入要替换的精确文字。')
-            except Exception as e:QMessageBox.warning(self,'无法读取模板',str(e))
+                QMessageBox.information(self,'Name Marker Detection','Detected: '+', '.join(found) if found else 'No standard marker found. Enter the exact text to replace.')
+            except Exception as e:QMessageBox.warning(self,'Cannot Read Template',str(e))
     def validate(self):
         for k,box in self.paths.items():
             if box.text().strip():
                 try:markers(box.text().strip())
                 except Exception as e:
-                    QMessageBox.warning(self,'无效模板',str(e));return
+                    QMessageBox.warning(self,'Invalid Template',str(e));return
         self.accept()
     def value(self):
         return {'templates':{k:{'path':box.text().strip(),'marker':self.tokens[k].text().strip() or 'auto'} for k,box in self.paths.items()},'engine':self.engine.currentText(),'soffice':self.soffice.text().strip()}
 
 
 class GoogleDialog(QDialog):
-    columns=[('type','类别'),('spreadsheet','Google Sheet URL / ID'),('range','范围（含表头）'),('destination','本地工作表'),('name','姓名列'),('phone','电话列'),('email','Email 列'),('date','日期列'),('key','唯一 ID 列（建议）')]
+    columns=[('type','Type'),('spreadsheet','Google Sheet URL / ID'),('range','Range (including headers)'),('destination','Local worksheet'),('name','Name column'),('phone','Phone column'),('email','Email column'),('date','Date column'),('key','Unique ID column (recommended)')]
     def __init__(self,cfg,parent=None):
-        super().__init__(parent);self.setWindowTitle('Google Sheets 连接设置');self.resize(1150,480)
+        super().__init__(parent);self.setWindowTitle('Google Sheets Settings');self.resize(1150,480)
         layout=QVBoxLayout(self)
-        label=QLabel('1. 在 Google Cloud 启用 Sheets API，创建 Service Account 并下载 JSON。\n2. 把 Google 表格以 Viewer 权限分享给 JSON 中的 client_email。\n3. 每个来源单独一行；填写表头的精确名称。只读取 Google，本地修改不会回写。\n没有唯一 ID 时按行号同步：Google 来源必须只追加，不能排序、插入或删除旧行。');label.setWordWrap(True);layout.addWidget(label)
-        row=QHBoxLayout();self.credentials=QLineEdit(cfg.get('credentials',''));button=QPushButton('选择凭证 JSON');button.clicked.connect(self.choose)
+        label=QLabel('1. Enable the Sheets API in Google Cloud, create a service account, and download its JSON key.\n2. Share the Google Sheet with the client_email in that JSON file as a Viewer.\n3. Add one row per source and enter exact column headings. Sync is read-only; local edits are not sent to Google.\nWithout a unique ID, records use row numbers: only append responses; do not sort, insert, or delete existing rows.');label.setWordWrap(True);layout.addWidget(label)
+        row=QHBoxLayout();self.credentials=QLineEdit(cfg.get('credentials',''));button=QPushButton('Choose Credentials JSON');button.clicked.connect(self.choose)
         row.addWidget(self.credentials);row.addWidget(button);layout.addLayout(row)
         self.table=QTableWidget(0,len(self.columns));self.table.setHorizontalHeaderLabels([label for _,label in self.columns]);self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents);layout.addWidget(self.table)
         for source in cfg.get('sources',[]):self.add(source)
-        buttons=QHBoxLayout();add=QPushButton('新增来源');add.clicked.connect(lambda:self.add({}));delete=QPushButton('移除选中来源');delete.clicked.connect(self.remove)
-        buttons.addWidget(add);buttons.addWidget(delete);self.enabled=QCheckBox('自动同步');self.enabled.setChecked(cfg.get('enabled',False));buttons.addWidget(self.enabled)
-        self.interval=QSpinBox();self.interval.setRange(15,3600);self.interval.setValue(cfg.get('interval',60));self.interval.setSuffix(' 秒');buttons.addWidget(self.interval);layout.addLayout(buttons)
+        buttons=QHBoxLayout();add=QPushButton('Add Source');add.clicked.connect(lambda:self.add({}));delete=QPushButton('Remove Selected Sources');delete.clicked.connect(self.remove)
+        buttons.addWidget(add);buttons.addWidget(delete);self.enabled=QCheckBox('Auto sync');self.enabled.setChecked(cfg.get('enabled',False));buttons.addWidget(self.enabled)
+        self.interval=QSpinBox();self.interval.setRange(15,3600);self.interval.setValue(cfg.get('interval',60));self.interval.setSuffix(' seconds');buttons.addWidget(self.interval);layout.addLayout(buttons)
         done=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);done.accepted.connect(self.validate);done.rejected.connect(self.reject);layout.addWidget(done)
     def choose(self):
-        path,_=QFileDialog.getOpenFileName(self,'选择 Service Account JSON','','JSON (*.json)')
+        path,_=QFileDialog.getOpenFileName(self,'Choose Service Account JSON','','JSON (*.json)',options=QFileDialog.Option.DontUseNativeDialog)
         if path:self.credentials.setText(path)
     def add(self,source):
         r=self.table.rowCount();self.table.insertRow(r)
@@ -172,12 +172,12 @@ class GoogleDialog(QDialog):
             cfg=self.value();dest=set()
             for s in cfg['sources']:
                 spreadsheet_id(s['spreadsheet'])
-                if not s['name'] or not s['range'] or not s['destination']:raise ValueError('每个来源必须填写范围、本地工作表和姓名列。')
-                if s['destination'] in dest:raise ValueError('每个来源必须使用不同的本地工作表。')
+                if not s['name'] or not s['range'] or not s['destination']:raise ValueError('Each source requires a range, a local worksheet, and a name column.')
+                if s['destination'] in dest:raise ValueError('Each source must use a different local worksheet.')
                 dest.add(s['destination'])
-            if cfg['sources'] and not Path(cfg['credentials']).is_file():raise ValueError('请选择 Service Account JSON。')
+            if cfg['sources'] and not Path(cfg['credentials']).is_file():raise ValueError('Please select a service account JSON file.')
             self.accept()
-        except Exception as e:QMessageBox.warning(self,'设置未完成',str(e))
+        except Exception as e:QMessageBox.warning(self,'Incomplete Settings',str(e))
 
 
 class Window(QMainWindow):
@@ -195,22 +195,22 @@ class Window(QMainWindow):
         self.pool=QThreadPool(self);self.pool.setMaxThreadCount(2)
         self.setWindowTitle('Foodbank · Community Admin');self.resize(1380,850)
         root=QWidget();self.setCentralWidget(root);layout=QVBoxLayout(root);layout.setContentsMargins(22,18,22,16);layout.setSpacing(12)
-        title=QLabel('FOODBANK  /  社区资料管理');title.setObjectName('title');layout.addWidget(title)
+        title=QLabel('FOODBANK  /  Community Records');title.setObjectName('title');layout.addWidget(title)
         self.summary=QLabel();layout.addWidget(self.summary)
         toolbar=QHBoxLayout();layout.addLayout(toolbar)
-        for label,fn in [('打开 Excel',self.open_excel),('新增用户',self.add_row),('删除选中',self.delete_rows),('保存',self.save),('重新载入',self.reload),('同步 Google',self.sync_google)]:
+        for label,fn in [('Open Excel',self.open_excel),('Add User',self.add_row),('Delete Selected',self.delete_rows),('Save',self.save),('Reload',self.reload),('Sync Google',self.sync_google)]:
             b=QPushButton(label);b.clicked.connect(fn);toolbar.addWidget(b)
-        toolbar.addStretch();self.autosave=QCheckBox('自动保存');self.autosave.setChecked(self.cfg['autosave']);self.autosave.toggled.connect(self.options_changed);toolbar.addWidget(self.autosave)
-        self.auto_pdf=QCheckBox('自动生成 PDF');self.auto_pdf.setChecked(self.cfg['auto_pdf']);self.auto_pdf.toggled.connect(self.options_changed);toolbar.addWidget(self.auto_pdf)
+        toolbar.addStretch();self.autosave=QCheckBox('Auto save');self.autosave.setChecked(self.cfg['autosave']);self.autosave.toggled.connect(self.options_changed);toolbar.addWidget(self.autosave)
+        self.auto_pdf=QCheckBox('Auto generate PDFs');self.auto_pdf.setChecked(self.cfg['auto_pdf']);self.auto_pdf.toggled.connect(self.options_changed);toolbar.addWidget(self.auto_pdf)
         filters=QHBoxLayout();layout.addLayout(filters)
         self.sheets=QComboBox();self.sheets.currentTextChanged.connect(self.change_sheet);filters.addWidget(self.sheets)
-        self.search=QLineEdit();self.search.setPlaceholderText('搜索姓名、电话或任意资料…');self.search.textChanged.connect(self.render);filters.addWidget(self.search,1)
-        self.category=QComboBox();self.category.addItems(['全部类别','volunteer','donor','beneficiary']);self.category.currentTextChanged.connect(self.render);filters.addWidget(self.category)
+        self.search=QLineEdit();self.search.setPlaceholderText('Search names, phone numbers, or any field...');self.search.textChanged.connect(self.render);filters.addWidget(self.search,1)
+        self.category=QComboBox();self.category.addItems(['All types','volunteer','donor','beneficiary']);self.category.currentTextChanged.connect(self.render);filters.addWidget(self.category)
         self.table=RecordTable();self.table.setAlternatingRowColors(True);self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows);self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive);self.table.verticalHeader().setDefaultSectionSize(38);self.table.itemChanged.connect(self.edited);layout.addWidget(self.table,1)
         footer=QHBoxLayout();layout.addLayout(footer)
-        for label,fn in [('列映射 / 类别',self.configure_mapping),('感谢状模板',self.configure_templates),('生成 / 重试 PDF',self.manual_pdf),('Google 连接设置',self.configure_google),('打开 PDF 文件夹',self.open_output),('电话区号',self.configure_country)]:
+        for label,fn in [('Column Mapping',self.configure_mapping),('Templates',self.configure_templates),('Generate / Retry PDFs',self.manual_pdf),('Google Settings',self.configure_google),('Open PDF Folder',self.open_output),('Country Code',self.configure_country)]:
             b=QPushButton(label);b.clicked.connect(fn);footer.addWidget(b)
-        self.info=QLabel('准备就绪');self.info.setWordWrap(True);layout.addWidget(self.info)
+        self.info=QLabel('Ready');self.info.setWordWrap(True);layout.addWidget(self.info)
         self.setStyleSheet('''QMainWindow,QWidget {background:#f3f6fa;color:#172b4d;font-size:13px;} QLabel#title {font-size:24px;font-weight:700;color:#125f65;} QPushButton {background:#176b70;color:white;border:0;border-radius:5px;padding:9px 13px;} QPushButton:hover {background:#0b5157;} QPushButton:disabled {background:#95a5ab;} QLineEdit,QComboBox,QSpinBox {background:white;color:#172b4d;padding:7px;border:1px solid #cbd5e1;border-radius:4px;} QTableWidget {background:white;alternate-background-color:#edf4f7;color:#172b4d;gridline-color:#dbe3ea;selection-background-color:#c2e7e9;selection-color:#172b4d;} QHeaderView::section {background:#244753;color:white;padding:9px;border:0;} QCheckBox {spacing:6px;}''')
         self.save_timer=QTimer(self);self.save_timer.setSingleShot(True);self.save_timer.setInterval(1400);self.save_timer.timeout.connect(lambda:self.save(quiet=True))
         self.watch_timer=QTimer(self);self.watch_timer.timeout.connect(self.watch);self.watch_timer.start(2500)
@@ -222,7 +222,7 @@ class Window(QMainWindow):
 
     def persist(self):write_json(SETTINGS,self.cfg)
     def say(self,message):self.info.setText(message)
-    def fail(self,message):self.say(message);QMessageBox.warning(self,'操作未完成',message)
+    def fail(self,message):self.say(message);QMessageBox.warning(self,'Action Failed',message)
     def scope(self):return hashlib.sha256(str(self.store.path).encode()).hexdigest()[:20]
     def cache_key(self,uid):return self.scope()+':'+str(uid)
     def mapping_key(self, sheet=None):return self.scope()+':'+(sheet or self.sheet)
@@ -243,8 +243,8 @@ class Window(QMainWindow):
         self.cfg['sheet']=self.sheet;self.cfg['workbook']=str(self.store.path);self.persist();self.render()
     def render(self,*args):
         q=self.search.text().casefold();category=self.category.currentText()
-        self.visible=[i for i,r in enumerate(self.rows) if q in ' '.join(text(r.get(h)) for h in self.headers).casefold() and (category=='全部类别' or self.record(r)['type']==category)]
-        self.table.blockSignals(True);self.table.clearContents();self.table.setRowCount(len(self.visible));self.table.setColumnCount(len(self.headers)+2);self.table.setHorizontalHeaderLabels(self.headers+['感谢状状态','分享'])
+        self.visible=[i for i,r in enumerate(self.rows) if q in ' '.join(text(r.get(h)) for h in self.headers).casefold() and (category=='All types' or self.record(r)['type']==category)]
+        self.table.blockSignals(True);self.table.clearContents();self.table.setRowCount(len(self.visible));self.table.setColumnCount(len(self.headers)+2);self.table.setHorizontalHeaderLabels(self.headers+['Certificate Status','Share'])
         for ui,i in enumerate(self.visible):
             row=self.rows[i]
             for c,h in enumerate(self.headers):
@@ -252,8 +252,8 @@ class Window(QMainWindow):
                 if self.sheet_is_synced():item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(ui,c,item)
             rec=self.record(row);entry=self.cache.get(self.cache_key(rec['id']),{})
-            status='不需要感谢状' if rec['type']=='beneficiary' else entry.get('status','等待处理' if rec['type'] else '请选择类别 / 列映射')
-            if self.dirty and rec['type'] in ('donor','volunteer'):status='待保存'
+            status='No certificate required' if rec['type']=='beneficiary' else entry.get('status','Pending' if rec['type'] else 'Select a type / column mapping')
+            if self.dirty and rec['type'] in ('donor','volunteer'):status='Unsaved'
             item=QTableWidgetItem(status);item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable);self.table.setItem(ui,len(self.headers),item)
             button=QPushButton('WhatsApp ↗');button.clicked.connect(lambda checked=False,index=i:self.share(index));self.table.setCellWidget(ui,len(self.headers)+1,button)
         self.table.blockSignals(False)
@@ -261,12 +261,12 @@ class Window(QMainWindow):
             if h==self.mapping().get('type'):self.table.setItemDelegateForColumn(c,TypeDelegate(self.table))
             else:self.table.setItemDelegateForColumn(c,None)
         self.table.setColumnWidth(0,230);self.table.setColumnWidth(len(self.headers),230);self.table.setColumnWidth(len(self.headers)+1,140)
-        self.summary.setText(f'{self.store.path}  ·  {self.sheet}  ·  {len(self.rows)} 条资料 / 显示 {len(self.visible)} 条'+('  ·  未保存' if self.dirty else ''))
+        self.summary.setText(f'{self.store.path}  ·  {self.sheet}  ·  {len(self.rows)} records / showing {len(self.visible)}'+('  ·  Unsaved changes' if self.dirty else ''))
     def sheet_is_synced(self):return any(r.get('__fb_source') for r in self.rows) or any(s.get('destination')==self.sheet for s in self.cfg['google'].get('sources',[]))
     def edited(self,item):
         if item.column()>=len(self.headers):return
         index=self.visible[item.row()];self.rows[index][self.headers[item.column()]]=item.text();self.dirty=True;self.generation+=1
-        self.say('正在编辑…'+('停止输入后自动保存。' if self.autosave.isChecked() else '请点击保存。'))
+        self.say('Editing... '+('Changes will save when you stop typing.' if self.autosave.isChecked() else 'Click Save to keep your changes.'))
         if self.autosave.isChecked():self.save_timer.start()
     def options_changed(self):
         self.cfg['autosave']=self.autosave.isChecked();self.cfg['auto_pdf']=self.auto_pdf.isChecked();self.persist()
@@ -274,7 +274,7 @@ class Window(QMainWindow):
         if self.cfg['auto_pdf']:QTimer.singleShot(0,self.auto_generate)
     def guard_edits(self):
         if not self.dirty:return True
-        reply=QMessageBox.question(self,'未保存的修改','先保存修改吗？',QMessageBox.StandardButton.Save|QMessageBox.StandardButton.Discard|QMessageBox.StandardButton.Cancel)
+        reply=QMessageBox.question(self,'Unsaved Changes','Save your changes first?',QMessageBox.StandardButton.Save|QMessageBox.StandardButton.Discard|QMessageBox.StandardButton.Cancel)
         if reply==QMessageBox.StandardButton.Save:return self.save()
         if reply==QMessageBox.StandardButton.Discard:self.save_timer.stop();return True
         return False
@@ -283,10 +283,10 @@ class Window(QMainWindow):
         if not self.dirty:return True
         try:
             self.store.save_rows(self.sheet,self.headers,self.rows,self.deleted)
-            self.load_table(self.sheet);self.say('已保存；原文件备份位于 '+str(self.store.backups))
+            self.load_table(self.sheet);self.say('Saved. Workbook backups: '+str(self.store.backups))
             self.auto_generate();return True
         except Exception as e:
-            message=f'保存失败，修改仍保留在界面：{e}'
+            message=f'Save failed; your edits remain in the table: {e}'
             if quiet:self.say(message)
             else:self.fail(message)
             return False
@@ -295,11 +295,11 @@ class Window(QMainWindow):
             self.save_timer.stop();self.store.reload();self.load_table(self.sheet);self.auto_generate()
     def open_excel(self):
         if not self.guard_edits():return
-        path,_=QFileDialog.getOpenFileName(self,'打开 Excel 数据库',str(DATA),'Excel (*.xlsx *.xlsm)')
+        path,_=QFileDialog.getOpenFileName(self,'Open Excel Database',str(DATA),'Excel (*.xlsx *.xlsm)',options=QFileDialog.Option.DontUseNativeDialog)
         if not path:return
         try:
             store=ExcelStore(path);self.save_timer.stop();self.store=store;self.load_table();self.auto_generate()
-            self.say('已打开 Excel。保存时会自动备份，并加入隐藏的记录 ID 列。')
+            self.say('Excel opened. Saving creates a backup and adds hidden record ID columns.')
         except Exception as e:self.fail(str(e))
     def change_sheet(self,name):
         if not name or name==self.sheet:return
@@ -308,12 +308,12 @@ class Window(QMainWindow):
         self.save_timer.stop();self.load_table(name);self.auto_generate()
     def add_row(self):
         if self.sheet_is_synced():
-            self.fail('Google 同步表为只读。请切换本地 Records 表新增用户。');return
+            self.fail('Google worksheets are read-only. Switch to a local worksheet to add users.');return
         row={h:'' for h in self.headers};row.update(__fb_id='',_row=None)
         self.rows.append(row);self.dirty=True;self.search.clear();self.category.setCurrentIndex(0);self.render();self.table.scrollToBottom()
         self.table.setCurrentCell(self.table.rowCount()-1,0);self.table.editItem(self.table.item(self.table.rowCount()-1,0))
     def paste_cells(self):
-        if self.sheet_is_synced():self.say('Google 同步工作表为只读。');return
+        if self.sheet_is_synced():self.say('Google worksheets are read-only.');return
         import csv,io
         try:matrix=list(csv.reader(io.StringIO(QApplication.clipboard().text()),delimiter='\t'))
         except csv.Error as e:self.say(str(e));return
@@ -324,7 +324,7 @@ class Window(QMainWindow):
             ui=startrow+offset
             if ui>=len(self.visible):
                 if self.search.text() or self.category.currentIndex()!=0:
-                    self.say('筛选中只粘贴到现有行；清除筛选后可粘贴新增行。');break
+                    self.say('While filtered, paste only fills existing rows. Clear filters to paste new rows.');break
                 row={h:'' for h in self.headers};row.update(__fb_id='',_row=None)
                 self.rows.append(row);self.visible.append(len(self.rows)-1)
             row=self.rows[self.visible[ui]]
@@ -333,13 +333,13 @@ class Window(QMainWindow):
         self.dirty=True;self.generation+=1;self.render()
         if self.autosave.isChecked():self.save_timer.start()
     def configure_country(self):
-        value,ok=QInputDialog.getText(self,'WhatsApp 电话区号','本地号码以 0 开头时使用的国家区号（马来西亚为 60）：',text=self.cfg.get('country','60'))
+        value,ok=QInputDialog.getText(self,'WhatsApp Country Code','Country code for local numbers starting with 0 (Malaysia: 60):',text=self.cfg.get('country','60'))
         if ok and value.strip().isdigit():self.cfg['country']=value.strip();self.persist()
     def delete_rows(self):
-        if self.sheet_is_synced():self.fail('请在 Google 来源管理报名记录；同步表为只读。');return
+        if self.sheet_is_synced():self.fail('Manage registrations in the Google source; synced worksheets are read-only.');return
         selected={self.visible[i.row()] for i in self.table.selectedIndexes()}
         if not selected:return
-        if QMessageBox.question(self,'删除资料',f'删除 {len(selected)} 条资料？保存前可以重新载入取消。')!=QMessageBox.StandardButton.Yes:return
+        if QMessageBox.question(self,'Delete Records',f'Delete {len(selected)} records? Reload before saving to undo this change.')!=QMessageBox.StandardButton.Yes:return
         self.deleted.extend(self.rows[i]['_row'] for i in selected if self.rows[i].get('_row'))
         self.rows=[r for i,r in enumerate(self.rows) if i not in selected];self.dirty=True;self.render()
         if self.autosave.isChecked():self.save_timer.start()
@@ -365,7 +365,7 @@ class Window(QMainWindow):
                 _,rows=self.store.table(sheet)
                 records.extend(self.record(r,mapping) for r in rows)
             self.headers,self.rows=self.store.table(self.sheet)
-        except Exception as e:self.say('自动生成暂停：'+str(e));return
+        except Exception as e:self.say('Automatic generation paused: '+str(e));return
         records=[r for r in records if r['type'] in ('donor','volunteer') and r['name'].strip()]
         if not records:self.render();return
         templates=copy.deepcopy(self.cfg['templates']);engine=self.cfg.get('engine','auto');soffice=self.cfg.get('soffice','')
@@ -377,15 +377,15 @@ class Window(QMainWindow):
                 try:results[key]=generate_one(rec,templates,DATA/'certificates',old.get(key),engine,soffice)
                 except Exception as e:results[key]={'status':str(e)}
             return results
-        self.busy_pdf=True;self.say(f'后台检查 / 生成 {len(records)} 份感谢状…')
+        self.busy_pdf=True;self.say(f'Checking / generating {len(records)} certificates in the background...')
         def complete(results):
             self.busy_pdf=False;self.cache.update(results);write_json(self.cache_path,self.cache)
             if version==self.generation:self.render()
             ready=sum(v.get('status')=='PDF ready' for v in results.values())
             issues=[v['status'] for v in results.values() if v.get('status')!='PDF ready']
-            self.say(f'感谢状：{ready} 份可用'+('；'+issues[0] if issues else ''))
+            self.say(f'Certificates: {ready} ready'+('; '+issues[0] if issues else ''))
             if self.pending_pdf:self.pending_pdf=False;QTimer.singleShot(0,self.auto_generate)
-        def failed(message):self.busy_pdf=False;self.say('PDF 任务失败：'+message)
+        def failed(message):self.busy_pdf=False;self.say('PDF task failed: '+message)
         self.submit(work,complete,failed)
     def submit(self,fn,complete,failed):
         job=Worker(fn);self.jobs.add(job)
@@ -404,29 +404,29 @@ class Window(QMainWindow):
         if self.cfg['google'].get('enabled'):self.google_timer.start(max(15,self.cfg['google'].get('interval',60))*1000)
     def sync_google(self):
         if self.busy_sync:return
-        if self.dirty:self.say('Google 同步等待本地修改保存。');return
+        if self.dirty:self.say('Google sync is waiting for local edits to be saved.');return
         cfg=copy.deepcopy(self.cfg['google'])
-        if not cfg.get('sources'):self.say('请先在 Google 连接设置中添加报名表来源。');return
+        if not cfg.get('sources'):self.say('Add registration sources in Google Settings first.');return
         self.busy_sync=True;target=self.store.path
         def complete(batches):
             self.busy_sync=False
             if self.dirty or self.store.path!=target or self.cfg['google']!=cfg:
-                self.say('Google 资料已读取；因正在编辑或切换数据库，稍后会重试同步。');return
+                self.say('Google data was read. Sync was deferred because edits or connection settings changed; retry when ready.');return
             try:
                 added,updated=self.store.merge_google(batches);current=self.sheet;self.load_table(current)
-                self.say(f'Google 同步完成：新增 {added}，更新 {updated}。')
+                self.say(f'Google sync complete: {added} added, {updated} updated.')
                 # Process every synced worksheet, including sources not currently visible.
                 if self.cfg['auto_pdf']:
                     self.auto_generate()
-            except Exception as e:self.say('同步写入失败：'+str(e))
-        def failed(message):self.busy_sync=False;self.say('Google 同步失败：'+message)
-        self.say('正在读取 Google Sheets…');self.submit(lambda:fetch(cfg),complete,failed)
+            except Exception as e:self.say('Could not save synced data: '+str(e))
+        def failed(message):self.busy_sync=False;self.say('Google sync failed: '+message)
+        self.say('Reading Google Sheets...');self.submit(lambda:fetch(cfg),complete,failed)
     def watch(self):
         try:
             if self.store.stamp()!=self.store.version:
-                if self.dirty:self.save_timer.stop();self.say('外部 Excel 已修改。请复制保留界面中的修改，再重新载入以解决冲突。')
+                if self.dirty:self.save_timer.stop();self.say('Excel changed outside the app. Copy your unsaved edits, then reload to resolve the conflict.')
                 else:self.store.reload();self.load_table(self.sheet);self.auto_generate()
-        except Exception as e:self.say('监测 Excel 失败：'+str(e))
+        except Exception as e:self.say('Could not monitor Excel: '+str(e))
     def share(self,index):
         if self.dirty and not self.save():return
         if index>=len(self.rows):return
@@ -445,12 +445,12 @@ class Window(QMainWindow):
             from urllib.parse import quote
             url=url.split('?text=')[0]+'?text='+quote(f'Hello {rec["name"] or "there"}, we are contacting you from the community foodbank.')
         webbrowser.open(url)
-        self.say('已打开 WhatsApp。请手动添加 PDF 并发送；PDF 路径已复制。' if current else '已打开 WhatsApp，请手动发送信息。感谢状尚未就绪时请检查状态并重试生成。')
+        self.say('WhatsApp opened. Attach the PDF and send manually; its path has been copied.' if current else 'WhatsApp opened. Send your message manually. If the certificate is not ready, check its status and retry generation.')
     def open_output(self):
         folder=DATA/'certificates';folder.mkdir(exist_ok=True);QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
     def closeEvent(self,event):
         if self.busy_pdf or self.busy_sync:
-            self.say('后台任务仍在运行，请等待完成后关闭。');event.ignore();return
+            self.say('Background tasks are still running. Wait for them to finish before closing.');event.ignore();return
         if not self.guard_edits():event.ignore();return
         self.save_timer.stop();event.accept()
 
@@ -458,7 +458,7 @@ class Window(QMainWindow):
 def main():
     app=QApplication(sys.argv);app.setApplicationName('Foodbank Community Admin')
     try:window=Window()
-    except Exception as e:QMessageBox.critical(None,'启动失败',str(e));return 1
+    except Exception as e:QMessageBox.critical(None,'Startup Failed',str(e));return 1
     window.show();return app.exec()
 
 

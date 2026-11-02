@@ -27,6 +27,38 @@ class DesktopTests(unittest.TestCase):
         self.window.dirty=False;self.window.busy_pdf=False;self.window.busy_sync=False
         self.window.save_timer.stop();self.window.watch_timer.stop();self.window.google_timer.stop();self.window.close();self.window.deleteLater();pump()
         self.patch2.stop();self.patch1.stop();self.temp.cleanup()
+    def test_interface_and_dialogs_use_english(self):
+        import ast,re
+        from PySide6.QtWidgets import QWidget,QComboBox,QTableWidget
+        tree=ast.parse(Path(main.__file__).read_text(encoding='utf-8'))
+        aliases=next(n for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='ALIASES' for t in n.targets))
+        allowed={id(n) for n in ast.walk(aliases)}
+        # Includes dialogs, validation failures and background status messages.
+        for node in ast.walk(tree):
+            if isinstance(node,ast.Constant) and isinstance(node.value,str) and id(node) not in allowed:
+                self.assertIsNone(re.search(r'[\u3400-\u9fff]',node.value),node.value)
+        dialogs=[main.MappingDialog(self.window.headers,{},self.window),main.TemplateDialog(self.window.cfg,self.window),main.GoogleDialog({},self.window)]
+        try:
+            for parent in [self.window]+dialogs:
+                for widget in [parent]+parent.findChildren(QWidget):
+                    for method in ('text','windowTitle','placeholderText','suffix'):
+                        if hasattr(widget,method):
+                            value=getattr(widget,method)()
+                            self.assertIsNone(re.search(r'[\u3400-\u9fff]',value),value)
+                    if isinstance(widget,QComboBox):
+                        for i in range(widget.count()):self.assertIsNone(re.search(r'[\u3400-\u9fff]',widget.itemText(i)))
+                    if isinstance(widget,QTableWidget):
+                        for i in range(widget.columnCount()):
+                            header=widget.horizontalHeaderItem(i)
+                            if header:self.assertIsNone(re.search(r'[\u3400-\u9fff]',header.text()))
+        finally:
+            for dialog in dialogs:dialog.close();dialog.deleteLater()
+    def test_english_filter_keeps_multilingual_records(self):
+        w=self.window;headers,_=w.store.table('Records')
+        w.store.save_rows('Records',headers,[{'Participant Name':'王小明','Type':'志愿者'},{'Participant Name':'Example Family','Type':'beneficiary'}])
+        w.load_table('Records');w.category.setCurrentText('volunteer')
+        self.assertEqual(w.table.rowCount(),1);self.assertEqual(w.table.item(0,0).text(),'王小明')
+        w.category.setCurrentText('All types');self.assertEqual(w.table.rowCount(),2)
     def test_add_autosave_search_reload(self):
         w=self.window;w.add_row();w.table.item(0,0).setText('Alice');w.table.item(0,1).setText('volunteer')
         pump(1600)
