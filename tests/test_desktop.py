@@ -1,0 +1,96 @@
+"""Headless GUI checks: never opens WhatsApp or contacts Google."""
+import json
+import os
+os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
+import tempfile
+from pathlib import Path
+import unittest
+from unittest.mock import patch
+from PySide6.QtWidgets import QApplication,QDialog
+from PySide6.QtCore import QEventLoop,QTimer
+import main
+
+APP=QApplication.instance() or QApplication([])
+
+
+def pump(ms=50):
+    loop=QEventLoop();QTimer.singleShot(ms,loop.quit);loop.exec()
+
+
+class DesktopTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
+        self.patch1=patch.object(main,'DATA',self.root);self.patch1.start()
+        self.patch2=patch.object(main,'SETTINGS',self.root/'settings.json');self.patch2.start()
+        self.window=main.Window();self.window.auto_pdf.setChecked(False);self.window.show();pump(260)
+    def tearDown(self):
+        self.window.dirty=False;self.window.busy_pdf=False;self.window.busy_sync=False
+        self.window.save_timer.stop();self.window.watch_timer.stop();self.window.google_timer.stop();self.window.close();self.window.deleteLater();pump()
+        self.patch2.stop();self.patch1.stop();self.temp.cleanup()
+    def test_add_autosave_search_reload(self):
+        w=self.window;w.add_row();w.table.item(0,0).setText('Alice');w.table.item(0,1).setText('volunteer')
+        pump(1600)
+        self.assertFalse(w.dirty);self.assertTrue(w.rows[0]['__fb_id'])
+        w.search.setText('Nobody');self.assertEqual(w.table.rowCount(),0)
+        w.search.clear();self.assertEqual(w.table.rowCount(),1)
+        w.reload();self.assertEqual(w.rows[0]['Participant Name'],'Alice')
+    def test_paste_multiple_rows(self):
+        w=self.window
+        QApplication.clipboard().setText('Alice\tvolunteer\t0123\nBob\tdonor\t0456')
+        w.paste_cells();self.assertEqual(len(w.rows),2);self.assertEqual(w.rows[1]['Type'],'donor')
+        self.assertTrue(w.save());self.assertEqual(len(w.store.table('Records')[1]),2)
+    @unittest.skipUnless(os.environ.get('FOODBANK_TEST_SOFFICE'),'real converter not configured')
+    def test_automatic_real_certificates_and_share(self):
+        import time
+        w=self.window
+        h,_=w.store.table('Records')
+        w.store.save_rows('Records',h,[{'Participant Name':'Example Volunteer','Type':'volunteer','Date':'2026-11-02'}, {'Participant Name':'Example Donor','Type':'donor','Date':'2026-11-02'}, {'Participant Name':'Example Family','Type':'beneficiary'}])
+        w.load_table('Records');w.cfg.update(engine='libreoffice',soffice=os.environ['FOODBANK_TEST_SOFFICE'],auto_pdf=True)
+        w.cfg['templates']={'volunteer':{'path':str(main.ROOT/'templates/volunteer_template.pptx'),'marker':'auto'},'donor':{'path':str(main.ROOT/'examples/donor_sample.pptx'),'marker':'auto'}}
+        w.auto_generate()
+        deadline=time.monotonic()+30
+        while w.busy_pdf and time.monotonic()<deadline:pump(100)
+        self.assertFalse(w.busy_pdf)
+        for row in w.rows[:2]:
+            rec=w.record(row);entry=w.cache[w.cache_key(rec['id'])]
+            self.assertEqual(entry['status'],'PDF ready',entry)
+            import subprocess
+            extracted=subprocess.check_output(['pdftotext',entry['pdf'],'-'],text=True)
+            self.assertIn(rec['name'],extracted)
+        self.assertEqual(len(list((self.root/'certificates').rglob('*.pdf'))),2)
+        with patch('main.webbrowser.open') as browser,patch('main.QDesktopServices.openUrl') as folder:
+            w.share(0);self.assertEqual(browser.call_count,1);self.assertEqual(folder.call_count,1)
+            self.assertTrue(QApplication.clipboard().text().endswith('.pdf'))
+    def test_beneficiary_share_user_action_only(self):
+        w=self.window;w.add_row();w.table.item(0,0).setText('Family');w.table.item(0,1).setText('beneficiary');w.table.item(0,2).setText('0123456789');w.save()
+        with patch('main.webbrowser.open') as browser:
+            w.share(0);self.assertEqual(browser.call_count,1);self.assertTrue(browser.call_args.args[0].startswith('https://wa.me/60'))
+    def test_dialogs_and_mapping(self):
+        w=self.window;mapping=main.MappingDialog(w.headers,{},w)
+        self.assertEqual(mapping.value()['name'],'Participant Name');mapping.close()
+        template=main.TemplateDialog(w.cfg,w);self.assertIn('volunteer',template.value()['templates']);template.close()
+        google=main.GoogleDialog({},w);google.add({'name':'Full Name'});self.assertEqual(google.value()['sources'][0]['name'],'Full Name');google.close()
+    def test_sync_callback_no_duplicate(self):
+        w=self.window
+        cfg={'sources':[{'destination':'Google Volunteers'}]};w.cfg['google']=cfg
+        batches=[{'sheet':'Google Volunteers','source':'abc','headers':['Participant Name','Type'],'rows':[{'Participant Name':'Alice','Type':'volunteer','__fb_source':'abc','__fb_key':'1'}]}]
+        with patch('main.fetch',return_value=batches):
+            w.sync_google();pump(150);self.assertFalse(w.busy_sync)
+            w.sync_google();pump(150);self.assertEqual(len(w.store.table('Google Volunteers')[1]),1)
+        w.change_sheet('Google Volunteers');self.assertTrue(w.sheet_is_synced())
+        self.assertFalse(w.table.item(0,0).flags() & main.Qt.ItemFlag.ItemIsEditable)
+    def test_auto_pdf_all_worksheets_in_background(self):
+        w=self.window;w.cfg['auto_pdf']=True
+        b={'sheet':'Google Donors','source':'abc','headers':['Participant Name','Type'],'rows':[{'Participant Name':'Donor','Type':'donor','__fb_source':'abc','__fb_key':'1'}]}
+        w.store.merge_google([b]);w.load_table('Records')
+        with patch('main.generate_one',return_value={'status':'PDF ready','pdf':'fake','signature':'s'}) as generate:
+            w.auto_generate();pump(150)
+            self.assertEqual(generate.call_count,1);self.assertEqual(generate.call_args.args[0]['name'],'Donor');self.assertFalse(w.busy_pdf)
+    def test_external_change_during_edit_not_overwritten(self):
+        w=self.window;w.add_row();w.table.item(0,0).setText('Local')
+        other=main.ExcelStore(w.store.path);h,_=other.table('Records');other.save_rows('Records',h,[{'Participant Name':'External'}])
+        w.watch();self.assertTrue(w.dirty);self.assertFalse(w.save_timer.isActive())
+        self.assertEqual(main.ExcelStore(w.store.path).table('Records')[1][0]['Participant Name'],'External')
+
+
+if __name__=='__main__':unittest.main()

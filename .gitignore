@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+data/
+certificates/
+*_backups/
+*.foodbank.lock
+config.json
+google-service-account*.json
+service-account*.json
+*.zip

@@ -1,0 +1,7 @@
+Use Certificate Templates in the desktop app to select your approved PPTX files.
+The original volunteer_template.pptx is included.
+An official donor template was not supplied; choose it in the app when available.
+Clearly labeled demo templates are in ../examples/.
+Use editable {{NAME}} or Name text, or configure an exact custom name marker.
+Optional markers: {{DATE}}, {{TYPE}}, {{ID}}.
+Do not put participant data or Google service-account credentials in this folder.
