@@ -59,6 +59,20 @@ class DesktopTests(unittest.TestCase):
         w.load_table('Records');w.category.setCurrentText('volunteer')
         self.assertEqual(w.table.rowCount(),1);self.assertEqual(w.table.item(0,0).text(),'王小明')
         w.category.setCurrentText('All types');self.assertEqual(w.table.rowCount(),2)
+    def test_simple_add_person_form_and_action_menus(self):
+        w=self.window
+        def fill_form():
+            dialog=QApplication.activeModalWidget()
+            dialog.findChild(main.QLineEdit,'person_Participant Name').setText('New Volunteer')
+            dialog.findChild(main.QComboBox,'person_Type').setCurrentText('volunteer')
+            dialog.accept()
+        QTimer.singleShot(0,fill_form);w.add_person_dialog()
+        self.assertFalse(w.dirty)
+        self.assertEqual(w.store.table('Records')[1][0]['Participant Name'],'New Volunteer')
+        self.assertIn('Certificate Templates',[a.text() for a in w.settings_menu.actions()])
+        self.assertIn('Delete Selected Rows',[a.text() for a in w.actions_menu.actions()])
+        self.assertIn('Generate / Retry PDFs',[a.text() for a in w.actions_menu.actions()])
+
     def test_add_autosave_search_reload(self):
         w=self.window;w.add_row();w.table.item(0,0).setText('Alice');w.table.item(0,1).setText('volunteer')
         pump(1600)

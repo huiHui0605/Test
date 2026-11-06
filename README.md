@@ -22,17 +22,19 @@ For subsequent launches, run `.venv\Scripts\python.exe main.py` or double-click 
 ## Try the sample workflow
 
 1. Click **Open Excel** and select `examples/sample_records.xlsx`. The sample contains three fictitious records and no real phone numbers. Changes are saved to the selected workbook, so copy it first if you want to keep a pristine sample.
-2. Click **Templates**. Select `examples/volunteer_sample.pptx` for volunteers and `examples/donor_sample.pptx` for donors. Leave each name marker as `auto`.
+2. Click **Settings → Certificate Templates**. Select `examples/volunteer_sample.pptx` for volunteers and `examples/donor_sample.pptx` for donors. Leave each name marker as `auto`.
 3. Select `powerpoint` (or `auto`) on Windows with PowerPoint installed. Without PowerPoint, select `libreoffice`; if necessary, enter `C:\Program Files\LibreOffice\program\soffice.exe` as the executable path.
-4. Click **Generate / Retry PDFs**. Volunteers and donors should show **PDF ready**. Beneficiaries do not receive certificates.
-5. Click **Open PDF Folder** to inspect the output. Check fonts, layout, and long names before sending real certificates.
-6. Use **Add User** to enter another record. With **Auto save** and **Auto generate PDFs** checked, edits save about 1.4 seconds after typing stops and eligible certificates generate in the background.
+4. Click **More Actions → Generate / Retry PDFs**. Volunteers and donors should show **PDF ready**. Beneficiaries do not receive certificates.
+5. Click **More Actions → Open PDF Folder** to inspect the output. Check fonts, layout, and long names before sending real certificates.
+6. Use **Add Person** to enter another record. With **Save automatically** and **Create certificates automatically** checked, edits save about 1.4 seconds after typing stops and eligible certificates generate in the background.
 
 Types are `volunteer`, `donor`, and `beneficiary`. Imported multilingual headings, names, and recognized type aliases are supported; user data is preserved as entered while application controls and messages are in English.
 
+The main screen shows three everyday actions: **Add Person**, **Open Excel**, and **Sync Google**. Add Person opens a simple form with a type dropdown. Setup options are grouped under **Settings**; manual saving, reloading, PDF retries, and deleting rows are under **More Actions**. Icons always appear alongside text labels. The three-step guide explains the daily workflow: add/edit, check certificate status, then share.
+
 ## Excel records and column mapping
 
-The default database is `data/community.xlsx`. **Open Excel** can select an existing `.xlsx` or `.xlsm` workbook; its first row is treated as column headings. **Column Mapping** selects the participant name, type, phone, and date columns. If a worksheet has no Type column, choose a default type for that worksheet.
+The default database is `data/community.xlsx`. **Open Excel** can select an existing `.xlsx` or `.xlsm` workbook; its first row is treated as column headings. **Settings → Worksheet Columns** selects the participant name, type, phone, and date columns. If a worksheet has no Type column, choose a default type for that worksheet.
 
 Edit cells directly, press Tab to move between cells, search any field, filter by type, and paste multiple rows or columns from Excel with Ctrl+V. Ctrl+C copies selected cells. While a filter is active, paste fills existing visible rows; clear filters to paste additional rows.
 
@@ -46,13 +48,13 @@ Saving uses a temporary file, atomic replacement, an application lock, and exter
 
 The recipient name must be editable PPTX text, not text baked into an image. The `auto` marker detects the standalone word `name` (case-insensitive) or `{{NAME}}`, including markers split across text runs. Alternatively, enter the exact text to replace. Text boxes, grouped shapes, table cells, and layout/master text are supported. Optional markers are `{{DATE}}`, `{{TYPE}}`, and `{{ID}}`.
 
-The original template is never edited. A temporary PPTX is filled and converted to a PDF under `data/certificates/volunteer` or `data/certificates/donor`. Generation is checked at startup, after saved edits, when external Excel changes are loaded, and after Google sync, across visible worksheets. Matching cached PDFs are reused; changes to names, dates, types, templates, or converter selection cause regeneration on the next check. Click **Reload** or **Generate / Retry PDFs** after modifying a template file.
+The original template is never edited. A temporary PPTX is filled and converted to a PDF under `data/certificates/volunteer` or `data/certificates/donor`. Generation is checked at startup, after saved edits, when external Excel changes are loaded, and after Google sync, across visible worksheets. Matching cached PDFs are reused; changes to names, dates, types, templates, or converter selection cause regeneration on the next check. Click **More Actions → Reload Excel** or **More Actions → Generate / Retry PDFs** after modifying a template file.
 
 - `templates/volunteer_template.pptx` is the supplied original volunteer template.
 - `examples/volunteer_sample.pptx` and `examples/donor_sample.pptx` are clearly labeled demonstration designs.
-- An official donor template has not been supplied. Select your approved file in **Templates** before production use.
+- An official donor template has not been supplied. Select your approved file in **Settings → Certificate Templates** before production use.
 - Windows `auto` uses PowerPoint COM and requires PowerPoint and pywin32. On Linux/macOS, `auto` uses LibreOffice Impress.
-- Missing templates/converters and export errors appear in the certificate status. Fix the prerequisite and click **Generate / Retry PDFs**.
+- Missing templates/converters and export errors appear in the certificate status. Fix the prerequisite and click **More Actions → Generate / Retry PDFs**.
 - Long names may overflow the original design; enlarge the text box or adjust template font sizes. LibreOffice and PowerPoint may render fonts and line breaks differently.
 - Historical PDFs are retained. The Share action uses only a PDF whose signature matches the current record and template.
 
@@ -61,7 +63,7 @@ The original template is never edited. A temporary PPTX is filled and converted 
 1. Link Google Form responses to a Google Sheet.
 2. Enable the **Google Sheets API** in Google Cloud, create a service account, and download its JSON key to a secure local location.
 3. Share each Google Sheet with the JSON file's `client_email`, granting **Viewer** access. Never commit this key to GitHub.
-4. Open **Google Settings**, select the credentials JSON, and add a source for each registration category. Enter the type, Sheet URL/ID, A1 range including its header row (for example `'Form Responses 1'!A1:ZZ`), and a separate local destination worksheet name (maximum 31 characters).
+4. Open **Settings → Google Sheets Connection**, select the credentials JSON, and add a source for each registration category. Enter the type, Sheet URL/ID, A1 range including its header row (for example `'Form Responses 1'!A1:ZZ`), and a separate local destination worksheet name (maximum 31 characters).
 5. Enter the exact source headings for the name, phone, email, and date columns. Name is required; the others are optional. A unique, nonempty response ID column is strongly recommended.
 6. Enable **Auto sync** (default interval: 60 seconds), or click **Sync Google** manually.
 
@@ -75,9 +77,9 @@ Real access requires your credentials and sharing permissions. Network access to
 
 ## WhatsApp sharing
 
-The last table column contains **WhatsApp ↗**. Clicking it opens the recipient's chat. If a current PDF is ready, the app also opens its folder and copies the PDF path. **Attach the PDF and send manually in WhatsApp.** Ordinary WhatsApp links cannot attach local files automatically; no messages are sent automatically.
+The last table column contains **Share**. Clicking it opens the recipient's chat. If a current PDF is ready, the app also opens its folder and copies the PDF path. **Attach the PDF and send manually in WhatsApp.** Ordinary WhatsApp links cannot attach local files automatically; no messages are sent automatically.
 
-Default country code: Malaysia `60`. Local numbers starting with `0` are normalized accordingly; `+60...` and `0060...` are supported. Change the default with **Country Code**. Store phone numbers as Excel text to preserve leading zeros.
+Default country code: Malaysia `60`. Local numbers starting with `0` are normalized accordingly; `+60...` and `0060...` are supported. Change the default with **Settings → WhatsApp Country Code**. Store phone numbers as Excel text to preserve leading zeros.
 
 ## Settings and recovery
 

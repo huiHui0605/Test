@@ -9,9 +9,11 @@ QT_QPA_PLATFORM=offscreen FOODBANK_TEST_SOFFICE=/workspace/foodbank-libreoffice/
   /workspace/foodbank-venv/bin/python -m unittest discover -s tests -v
 ```
 
-Result: **32 tests passed, 0 skipped**.
+Result: **33 tests passed, 0 skipped**.
 
 Coverage:
+
+- Simplified Add Person form saves a real Excel record; settings and advanced actions remain reachable through their menus.
 
 - English controls, dialog titles, labels, headers, validation errors, and background messages. Chinese input aliases remain supported without becoming interface labels.
 - English type filtering preserves multilingual participant data.

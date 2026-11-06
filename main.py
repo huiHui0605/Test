@@ -12,7 +12,7 @@ from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,
     QLineEdit,QPushButton,QComboBox,QTableWidget,QTableWidgetItem,QHeaderView,QFileDialog,
     QMessageBox,QDialog,QFormLayout,QDialogButtonBox,QCheckBox,QSpinBox,QTabWidget,
-    QAbstractItemView,QInputDialog,QStyledItemDelegate)
+    QAbstractItemView,QInputDialog,QStyledItemDelegate,QMenu,QStyle)
 from storage import ExcelStore, ConflictError, text
 from certificates import kind, markers, generate_one, certificate_signature, whatsapp_url
 from google_sync import fetch
@@ -195,23 +195,42 @@ class Window(QMainWindow):
         self.pool=QThreadPool(self);self.pool.setMaxThreadCount(2)
         self.setWindowTitle('Foodbank · Community Admin');self.resize(1380,850)
         root=QWidget();self.setCentralWidget(root);layout=QVBoxLayout(root);layout.setContentsMargins(22,18,22,16);layout.setSpacing(12)
-        title=QLabel('FOODBANK  /  Community Records');title.setObjectName('title');layout.addWidget(title)
-        self.summary=QLabel();layout.addWidget(self.summary)
+        heading=QHBoxLayout();layout.addLayout(heading)
+        title=QLabel('Community Records');title.setObjectName('title');heading.addWidget(title);heading.addStretch()
+        settings_button=QPushButton('Settings');settings_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+        settings_button.setToolTip('Set up certificates, Google Sheets, and worksheet columns.')
+        self.settings_menu=QMenu(settings_button)
+        for label,fn in [('Certificate Templates',self.configure_templates),('Google Sheets Connection',self.configure_google),('Worksheet Columns',self.configure_mapping),('WhatsApp Country Code',self.configure_country)]:
+            self.settings_menu.addAction(label,fn)
+        settings_button.setMenu(self.settings_menu);heading.addWidget(settings_button)
+        guide=QLabel('1  Add or edit a person     →     2  Check certificate status     →     3  Share on WhatsApp')
+        guide.setObjectName('guide');guide.setWordWrap(True);layout.addWidget(guide)
+        self.summary=QLabel();self.summary.setWordWrap(True);layout.addWidget(self.summary)
         toolbar=QHBoxLayout();layout.addLayout(toolbar)
-        for label,fn in [('Open Excel',self.open_excel),('Add User',self.add_row),('Delete Selected',self.delete_rows),('Save',self.save),('Reload',self.reload),('Sync Google',self.sync_google)]:
-            b=QPushButton(label);b.clicked.connect(fn);toolbar.addWidget(b)
-        toolbar.addStretch();self.autosave=QCheckBox('Auto save');self.autosave.setChecked(self.cfg['autosave']);self.autosave.toggled.connect(self.options_changed);toolbar.addWidget(self.autosave)
-        self.auto_pdf=QCheckBox('Auto generate PDFs');self.auto_pdf.setChecked(self.cfg['auto_pdf']);self.auto_pdf.toggled.connect(self.options_changed);toolbar.addWidget(self.auto_pdf)
+        for label,fn,icon,tip in [
+            ('Add Person',self.add_person_dialog,QStyle.StandardPixmap.SP_FileDialogNewFolder,'Enter a new person using a simple form.'),
+            ('Open Excel',self.open_excel,QStyle.StandardPixmap.SP_DialogOpenButton,'Choose the Excel workbook you want to manage.'),
+            ('Sync Google',self.sync_google,QStyle.StandardPixmap.SP_BrowserReload,'Check connected Google Sheets for new registrations.')]:
+            button=QPushButton(label);button.setIcon(self.style().standardIcon(icon));button.setToolTip(tip);button.clicked.connect(fn);toolbar.addWidget(button)
+        toolbar.addStretch()
+        more=QPushButton('More Actions');more.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogListView))
+        self.actions_menu=QMenu(more)
+        for label,fn in [('Save Changes',self.save),('Reload Excel',self.reload),('Generate / Retry PDFs',self.manual_pdf),('Open PDF Folder',self.open_output)]:
+            self.actions_menu.addAction(label,fn)
+        self.actions_menu.addSeparator();self.actions_menu.addAction('Delete Selected Rows',self.delete_rows)
+        more.setMenu(self.actions_menu);toolbar.addWidget(more)
         filters=QHBoxLayout();layout.addLayout(filters)
-        self.sheets=QComboBox();self.sheets.currentTextChanged.connect(self.change_sheet);filters.addWidget(self.sheets)
-        self.search=QLineEdit();self.search.setPlaceholderText('Search names, phone numbers, or any field...');self.search.textChanged.connect(self.render);filters.addWidget(self.search,1)
+        filters.addWidget(QLabel('Worksheet'))
+        self.sheets=QComboBox();self.sheets.setToolTip('Choose which worksheet to display.');self.sheets.currentTextChanged.connect(self.change_sheet);filters.addWidget(self.sheets)
+        self.search=QLineEdit();self.search.setPlaceholderText('Search for a person...');self.search.addAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView),QLineEdit.ActionPosition.LeadingPosition);self.search.textChanged.connect(self.render);filters.addWidget(self.search,1)
         self.category=QComboBox();self.category.addItems(['All types','volunteer','donor','beneficiary']);self.category.currentTextChanged.connect(self.render);filters.addWidget(self.category)
         self.table=RecordTable();self.table.setAlternatingRowColors(True);self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows);self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive);self.table.verticalHeader().setDefaultSectionSize(38);self.table.itemChanged.connect(self.edited);layout.addWidget(self.table,1)
         footer=QHBoxLayout();layout.addLayout(footer)
-        for label,fn in [('Column Mapping',self.configure_mapping),('Templates',self.configure_templates),('Generate / Retry PDFs',self.manual_pdf),('Google Settings',self.configure_google),('Open PDF Folder',self.open_output),('Country Code',self.configure_country)]:
-            b=QPushButton(label);b.clicked.connect(fn);footer.addWidget(b)
+        self.autosave=QCheckBox('Save automatically');self.autosave.setChecked(self.cfg['autosave']);self.autosave.toggled.connect(self.options_changed);footer.addWidget(self.autosave)
+        self.auto_pdf=QCheckBox('Create certificates automatically');self.auto_pdf.setChecked(self.cfg['auto_pdf']);self.auto_pdf.toggled.connect(self.options_changed);footer.addWidget(self.auto_pdf)
+        footer.addStretch();hint=QLabel('Double-click a cell to edit.');footer.addWidget(hint)
         self.info=QLabel('Ready');self.info.setWordWrap(True);layout.addWidget(self.info)
-        self.setStyleSheet('''QMainWindow,QWidget {background:#f3f6fa;color:#172b4d;font-size:13px;} QLabel#title {font-size:24px;font-weight:700;color:#125f65;} QPushButton {background:#176b70;color:white;border:0;border-radius:5px;padding:9px 13px;} QPushButton:hover {background:#0b5157;} QPushButton:disabled {background:#95a5ab;} QLineEdit,QComboBox,QSpinBox {background:white;color:#172b4d;padding:7px;border:1px solid #cbd5e1;border-radius:4px;} QTableWidget {background:white;alternate-background-color:#edf4f7;color:#172b4d;gridline-color:#dbe3ea;selection-background-color:#c2e7e9;selection-color:#172b4d;} QHeaderView::section {background:#244753;color:white;padding:9px;border:0;} QCheckBox {spacing:6px;}''')
+        self.setStyleSheet('''QMainWindow,QWidget {background:#f3f6fa;color:#172b4d;font-size:13px;} QLabel#title {font-size:26px;font-weight:700;color:#125f65;} QLabel#guide {background:#e1f0ee;color:#145b60;border-radius:8px;padding:14px;font-size:14px;} QMenu {background:white;color:#172b4d;padding:6px;border:1px solid #cbd5e1;} QMenu::item {padding:10px 24px;} QMenu::item:selected {background:#dcefed;} QPushButton {background:#176b70;color:white;border:0;border-radius:5px;padding:9px 13px;} QPushButton:hover {background:#0b5157;} QPushButton:disabled {background:#95a5ab;} QLineEdit,QComboBox,QSpinBox {background:white;color:#172b4d;padding:7px;border:1px solid #cbd5e1;border-radius:4px;} QTableWidget {background:white;alternate-background-color:#edf4f7;color:#172b4d;gridline-color:#dbe3ea;selection-background-color:#c2e7e9;selection-color:#172b4d;} QHeaderView::section {background:#244753;color:white;padding:9px;border:0;} QCheckBox {spacing:6px;}''')
         self.save_timer=QTimer(self);self.save_timer.setSingleShot(True);self.save_timer.setInterval(1400);self.save_timer.timeout.connect(lambda:self.save(quiet=True))
         self.watch_timer=QTimer(self);self.watch_timer.timeout.connect(self.watch);self.watch_timer.start(2500)
         self.google_timer=QTimer(self);self.google_timer.timeout.connect(self.sync_google)
@@ -255,7 +274,7 @@ class Window(QMainWindow):
             status='No certificate required' if rec['type']=='beneficiary' else entry.get('status','Pending' if rec['type'] else 'Select a type / column mapping')
             if self.dirty and rec['type'] in ('donor','volunteer'):status='Unsaved'
             item=QTableWidgetItem(status);item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable);self.table.setItem(ui,len(self.headers),item)
-            button=QPushButton('WhatsApp ↗');button.clicked.connect(lambda checked=False,index=i:self.share(index));self.table.setCellWidget(ui,len(self.headers)+1,button)
+            button=QPushButton('Share');button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward));button.setToolTip('Open WhatsApp. Attach the certificate PDF and send it manually.');button.clicked.connect(lambda checked=False,index=i:self.share(index));self.table.setCellWidget(ui,len(self.headers)+1,button)
         self.table.blockSignals(False)
         for c,h in enumerate(self.headers):
             if h==self.mapping().get('type'):self.table.setItemDelegateForColumn(c,TypeDelegate(self.table))
@@ -306,6 +325,30 @@ class Window(QMainWindow):
         if not self.guard_edits():
             self.sheets.blockSignals(True);self.sheets.setCurrentText(self.sheet);self.sheets.blockSignals(False);return
         self.save_timer.stop();self.load_table(name);self.auto_generate()
+    def add_person_dialog(self):
+        if self.sheet_is_synced():
+            self.fail('Google worksheets are read-only. Choose a local worksheet to add a person.');return
+        if not self.guard_edits():return
+        # Discard must reset the table before the form adds a new record.
+        if self.dirty:self.store.reload();self.load_table(self.sheet)
+        dialog=QDialog(self);dialog.setWindowTitle('Add Person');dialog.resize(500,350)
+        form=QFormLayout(dialog);fields={};mapping=self.mapping()
+        note=QLabel('Enter the person details below. Certificates are created for volunteers and donors.');note.setWordWrap(True);form.addRow(note)
+        for header in self.headers:
+            if header==mapping.get('type'):
+                editor=QComboBox();editor.addItems(['volunteer','donor','beneficiary'])
+            else:
+                editor=QLineEdit()
+                if header==mapping.get('name'):editor.setPlaceholderText('Name to print on the certificate')
+            editor.setObjectName('person_'+header);fields[header]=editor;form.addRow(header,editor)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);form.addRow(buttons)
+        if dialog.exec()!=QDialog.DialogCode.Accepted:return
+        row={h:(field.currentText() if isinstance(field,QComboBox) else field.text().strip()) for h,field in fields.items()}
+        if not any(row.values()):return
+        row.update(__fb_id='',_row=None);self.rows.append(row);self.dirty=True
+        self.search.clear();self.category.setCurrentIndex(0);self.render();self.save()
+
     def add_row(self):
         if self.sheet_is_synced():
             self.fail('Google worksheets are read-only. Switch to a local worksheet to add users.');return
