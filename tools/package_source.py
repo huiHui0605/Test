@@ -4,7 +4,7 @@ import hashlib
 import sys
 import zipfile
 ROOT=Path(__file__).resolve().parents[1]
-FILES=['README.md','VALIDATION.md','main.py','storage.py','certificates.py','google_sync.py',
+FILES=['applications.py','README.md','VALIDATION.md','main.py','storage.py','certificates.py','google_sync.py',
        'requirements.txt','run.bat','run.sh','.gitignore',
        'templates/volunteer_template.pptx','templates/PLACE_TEMPLATES_HERE.txt',
        'examples/volunteer_sample.pptx','examples/donor_sample.pptx','examples/sample_records.xlsx','examples/interface.png']

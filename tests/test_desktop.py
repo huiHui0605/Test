@@ -57,8 +57,9 @@ class DesktopTests(unittest.TestCase):
         w=self.window;headers,_=w.store.table('Records')
         w.store.save_rows('Records',headers,[{'Participant Name':'王小明','Type':'志愿者'},{'Participant Name':'Example Family','Type':'beneficiary'}])
         w.load_table('Records');w.category.setCurrentText('volunteer')
-        self.assertEqual(w.table.rowCount(),1);self.assertEqual(w.table.item(0,0).text(),'王小明')
-        w.category.setCurrentText('All types');self.assertEqual(w.table.rowCount(),2)
+        self.assertEqual(len(w.visible),1);self.assertEqual(w.table.item(0,0).text(),'王小明')
+        w.category.setCurrentText('All types');self.assertEqual(len(w.visible),1)
+        w.workflow_tabs.setCurrentIndex(2);self.assertEqual(len(w.visible),1);self.assertEqual(w.table.item(0,0).text(),'Example Family')
     def test_simple_add_person_form_and_action_menus(self):
         w=self.window
         def fill_form():
@@ -73,12 +74,38 @@ class DesktopTests(unittest.TestCase):
         self.assertIn('Delete Selected Rows',[a.text() for a in w.actions_menu.actions()])
         self.assertIn('Generate / Retry PDFs',[a.text() for a in w.actions_menu.actions()])
 
+    def test_four_tabs_and_continuous_blank_rows(self):
+        w=self.window;self.assertEqual(w.workflow_tabs.count(),4)
+        self.assertEqual(w.table.rowCount(),6)
+        w.table.item(4,0).setText('Manual Volunteer')
+        self.assertEqual(w.table.rowCount(),11)
+        self.assertTrue(w.save())
+        self.assertEqual(len(w.rows),1);self.assertEqual(w.rows[0]['Type'],'volunteer')
+        self.assertEqual(w.table.rowCount(),7)
+        w.workflow_tabs.setCurrentIndex(1);self.assertEqual(len(w.visible),0)
+        w.table.item(0,0).setText('Manual Donor');w.save()
+        self.assertEqual(len(w.store.table('Records')[1]),2)
+        self.assertEqual(w.table.item(0,0).text(),'Manual Donor')
+        w.workflow_tabs.setCurrentIndex(3);self.assertEqual(w.table.item(0,0).text(),'Manual Volunteer')
+    def test_family_pdf_and_activity_share_preview(self):
+        w=self.window;h,_=w.store.table('Records')
+        w.store.save_rows('Records',h,[{'Participant Name':'Family Example','Type':'beneficiary','Phone':'0123456789'},{'Participant Name':'Volunteer Example','Type':'volunteer','Phone':'0123456789'}])
+        w.load_table('Records');w.workflow_tabs.setCurrentIndex(2)
+        with patch.object(w,'review_message',return_value=None),patch('main.webbrowser.open') as browser:
+            w.share(w.visible[0]);browser.assert_not_called()
+        self.assertEqual(len(list((self.root/'family_confirmations').glob('*.pdf'))),1)
+        w.workflow_tabs.setCurrentIndex(3);w.cfg['event_message']={'event':'Food Packing','date':'Saturday','time':'09:00','location':'Main Hall','details':'Bring water.','template':main.DEFAULT_MESSAGE}
+        with patch.object(w,'review_message',side_effect=lambda message,pdf:message) as preview,patch('main.webbrowser.open') as browser:
+            w.share(w.visible[0]);message=preview.call_args.args[0]
+            self.assertIn('Volunteer Example',message);self.assertIn('Main Hall',message);self.assertIn('Bring water.',message)
+            self.assertTrue(browser.call_args.args[0].startswith('https://wa.me/60123456789?'))
+
     def test_add_autosave_search_reload(self):
         w=self.window;w.add_row();w.table.item(0,0).setText('Alice');w.table.item(0,1).setText('volunteer')
         pump(1600)
         self.assertFalse(w.dirty);self.assertTrue(w.rows[0]['__fb_id'])
-        w.search.setText('Nobody');self.assertEqual(w.table.rowCount(),0)
-        w.search.clear();self.assertEqual(w.table.rowCount(),1)
+        w.search.setText('Nobody');self.assertEqual(len(w.visible),0)
+        w.search.clear();self.assertEqual(len(w.visible),1)
         w.reload();self.assertEqual(w.rows[0]['Participant Name'],'Alice')
     def test_paste_multiple_rows(self):
         w=self.window

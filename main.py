@@ -12,10 +12,11 @@ from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,
     QLineEdit,QPushButton,QComboBox,QTableWidget,QTableWidgetItem,QHeaderView,QFileDialog,
     QMessageBox,QDialog,QFormLayout,QDialogButtonBox,QCheckBox,QSpinBox,QTabWidget,
-    QAbstractItemView,QInputDialog,QStyledItemDelegate,QMenu,QStyle)
+    QAbstractItemView,QInputDialog,QStyledItemDelegate,QMenu,QStyle,QTabBar,QPlainTextEdit)
 from storage import ExcelStore, ConflictError, text
 from certificates import kind, markers, generate_one, certificate_signature, whatsapp_url
 from google_sync import fetch
+from applications import FAMILY_FORM_URL,DEFAULT_MESSAGE,event_message,message_url,family_pdf
 
 ROOT=Path(__file__).resolve().parent
 DATA=Path(os.environ.get('FOODBANK_DATA_DIR',str(ROOT/'data'))).expanduser().resolve()
@@ -189,6 +190,7 @@ class Window(QMainWindow):
         for k in ('volunteer','donor'):
             template=ROOT/'templates'/f'{k}_template.pptx'
             if template.exists():self.cfg['templates'].setdefault(k,{'path':str(template),'marker':'auto'})
+        self.active_workflow=0;self.tab_sheets={}
         self.store=ExcelStore(self.cfg['workbook']);self.sheet='';self.rows=[];self.headers=[];self.visible=[];self.deleted=[]
         self.dirty=False;self.busy_pdf=False;self.busy_sync=False;self.pending_pdf=False;self.jobs=set();self.generation=0
         self.cache_path=DATA/'certificate_index.json';self.cache=read_json(self.cache_path,{})
@@ -203,12 +205,14 @@ class Window(QMainWindow):
         for label,fn in [('Certificate Templates',self.configure_templates),('Google Sheets Connection',self.configure_google),('Worksheet Columns',self.configure_mapping),('WhatsApp Country Code',self.configure_country)]:
             self.settings_menu.addAction(label,fn)
         settings_button.setMenu(self.settings_menu);heading.addWidget(settings_button)
-        guide=QLabel('1  Add or edit a person     →     2  Check certificate status     →     3  Share on WhatsApp')
+        self.workflow_tabs=QTabBar();self.workflow_tabs.setExpanding(True)
+        for label in ['Volunteer Certificates','Donor Certificates','Family Applications','Volunteer Activities']:self.workflow_tabs.addTab(label)
+        layout.addWidget(self.workflow_tabs);self.workflow_tabs.currentChanged.connect(self.change_workflow)
+        guide=QLabel('Type in an empty row to add a person. Use Share to review and send on WhatsApp.')
         guide.setObjectName('guide');guide.setWordWrap(True);layout.addWidget(guide)
         self.summary=QLabel();self.summary.setWordWrap(True);layout.addWidget(self.summary)
         toolbar=QHBoxLayout();layout.addLayout(toolbar)
         for label,fn,icon,tip in [
-            ('Add Person',self.add_person_dialog,QStyle.StandardPixmap.SP_FileDialogNewFolder,'Enter a new person using a simple form.'),
             ('Open Excel',self.open_excel,QStyle.StandardPixmap.SP_DialogOpenButton,'Choose the Excel workbook you want to manage.'),
             ('Sync Google',self.sync_google,QStyle.StandardPixmap.SP_BrowserReload,'Check connected Google Sheets for new registrations.')]:
             button=QPushButton(label);button.setIcon(self.style().standardIcon(icon));button.setToolTip(tip);button.clicked.connect(fn);toolbar.addWidget(button)
@@ -219,6 +223,8 @@ class Window(QMainWindow):
             self.actions_menu.addAction(label,fn)
         self.actions_menu.addSeparator();self.actions_menu.addAction('Delete Selected Rows',self.delete_rows)
         more.setMenu(self.actions_menu);toolbar.addWidget(more)
+        self.event_button=QPushButton('Event Message');self.event_button.clicked.connect(self.configure_event);toolbar.addWidget(self.event_button)
+        self.form_button=QPushButton('Open Application Form');self.form_button.clicked.connect(lambda:webbrowser.open(FAMILY_FORM_URL));toolbar.addWidget(self.form_button)
         filters=QHBoxLayout();layout.addLayout(filters)
         filters.addWidget(QLabel('Worksheet'))
         self.sheets=QComboBox();self.sheets.setToolTip('Choose which worksheet to display.');self.sheets.currentTextChanged.connect(self.change_sheet);filters.addWidget(self.sheets)
@@ -234,10 +240,59 @@ class Window(QMainWindow):
         self.save_timer=QTimer(self);self.save_timer.setSingleShot(True);self.save_timer.setInterval(1400);self.save_timer.timeout.connect(lambda:self.save(quiet=True))
         self.watch_timer=QTimer(self);self.watch_timer.timeout.connect(self.watch);self.watch_timer.start(2500)
         self.google_timer=QTimer(self);self.google_timer.timeout.connect(self.sync_google)
-        self.load_table(self.cfg.get('sheet'))
+        self.load_table(self.cfg.get('sheet'));self.update_workflow_controls()
         self.setup_google_timer()
         QTimer.singleShot(200,self.auto_generate)
         if self.cfg['google'].get('enabled'):QTimer.singleShot(500,self.sync_google)
+
+    def workflow_kind(self):return ('volunteer','donor','beneficiary','volunteer')[self.active_workflow]
+    def update_workflow_controls(self):
+        self.event_button.setVisible(self.active_workflow==3);self.form_button.setVisible(self.active_workflow==2)
+        self.category.hide()
+    def change_workflow(self,index):
+        previous=self.active_workflow
+        if not self.guard_edits():
+            self.workflow_tabs.blockSignals(True);self.workflow_tabs.setCurrentIndex(previous);self.workflow_tabs.blockSignals(False);return
+        self.save_timer.stop();self.tab_sheets[previous]=self.sheet;self.active_workflow=index
+        self.search.clear();self.category.setCurrentIndex(0)
+        selected=self.tab_sheets.get(index)
+        if selected not in self.store.sheets:
+            selected=None
+            for sheet in self.store.sheets:
+                headers,rows=self.store.table(sheet);mapping=self.mapping(sheet,headers)
+                if any(self.record(r,mapping)['type']==self.workflow_kind() for r in rows):selected=sheet;break
+        self.load_table(selected or self.sheet);self.update_workflow_controls()
+    def blank_row(self):
+        row={h:'' for h in self.headers};row.update(__fb_id='',_row=None)
+        col=self.mapping().get('type')
+        if col:row[col]=self.workflow_kind()
+        return row
+    def append_entry_slots(self):
+        start=len(self.visible);self.table.setRowCount(start+6)
+        for r in range(start,start+6):
+            for c in range(len(self.headers)):self.table.setItem(r,c,QTableWidgetItem(''))
+            for c in (len(self.headers),len(self.headers)+1):
+                item=QTableWidgetItem('');item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable);self.table.setItem(r,c,item)
+    def configure_event(self):
+        cfg=self.cfg.get('event_message',{});dialog=QDialog(self);dialog.setWindowTitle('Activity Details and Message');dialog.resize(650,550);form=QFormLayout(dialog);fields={}
+        for key in ('event','date','time','location','details'):
+            field=QLineEdit(cfg.get(key,''));fields[key]=field;form.addRow(key.title(),field)
+        editor=QPlainTextEdit(cfg.get('template',DEFAULT_MESSAGE));form.addRow('Message template',editor)
+        form.addRow(QLabel('Placeholders: {name}, {event}, {date}, {time}, {location}, {details}, {phone}'))
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel);buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);form.addRow(buttons)
+        if dialog.exec():
+            values={k:f.text() for k,f in fields.items()};values['template']=editor.toPlainText()
+            try:event_message(values['template'],values)
+            except ValueError as e:self.fail(str(e));return
+            self.cfg['event_message']=values;self.persist()
+    def review_message(self,message,pdf=None):
+        dialog=QDialog(self);dialog.setWindowTitle('Review WhatsApp Message');dialog.resize(620,480);layout=QVBoxLayout(dialog)
+        layout.addWidget(QLabel('Review the message before opening WhatsApp. Send it manually there.'))
+        editor=QPlainTextEdit(message);layout.addWidget(editor)
+        if pdf:
+            label=QLabel('Attach this PDF manually: '+str(pdf));label.setWordWrap(True);layout.addWidget(label)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);buttons.button(QDialogButtonBox.StandardButton.Ok).setText('Open WhatsApp');buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons)
+        return editor.toPlainText() if dialog.exec() else None
 
     def persist(self):write_json(SETTINGS,self.cfg)
     def say(self,message):self.info.setText(message)
@@ -262,19 +317,22 @@ class Window(QMainWindow):
         self.cfg['sheet']=self.sheet;self.cfg['workbook']=str(self.store.path);self.persist();self.render()
     def render(self,*args):
         q=self.search.text().casefold();category=self.category.currentText()
-        self.visible=[i for i,r in enumerate(self.rows) if q in ' '.join(text(r.get(h)) for h in self.headers).casefold() and (category=='All types' or self.record(r)['type']==category)]
-        self.table.blockSignals(True);self.table.clearContents();self.table.setRowCount(len(self.visible));self.table.setColumnCount(len(self.headers)+2);self.table.setHorizontalHeaderLabels(self.headers+['Certificate Status','Share'])
+        self.visible=[i for i,r in enumerate(self.rows) if self.record(r)['type'] in (self.workflow_kind(),'') and q in ' '.join(text(r.get(h)) for h in self.headers).casefold() and (category=='All types' or self.record(r)['type']==category)]
+        self.table.blockSignals(True);self.table.clearContents();self.table.setRowCount(len(self.visible));self.table.setColumnCount(len(self.headers)+2);self.table.setHorizontalHeaderLabels(self.headers+['Application Status' if self.active_workflow in (2,3) else 'Certificate Status','Share'])
         for ui,i in enumerate(self.visible):
             row=self.rows[i]
             for c,h in enumerate(self.headers):
                 item=QTableWidgetItem(text(row.get(h)))
-                if self.sheet_is_synced():item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if row.get('__fb_source'):item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(ui,c,item)
             rec=self.record(row);entry=self.cache.get(self.cache_key(rec['id']),{})
             status='No certificate required' if rec['type']=='beneficiary' else entry.get('status','Pending' if rec['type'] else 'Select a type / column mapping')
+            if self.active_workflow==2:status='Ready for confirmation PDF'
+            elif self.active_workflow==3:status='Ready to share activity details'
             if self.dirty and rec['type'] in ('donor','volunteer'):status='Unsaved'
             item=QTableWidgetItem(status);item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable);self.table.setItem(ui,len(self.headers),item)
-            button=QPushButton('Share');button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward));button.setToolTip('Open WhatsApp. Attach the certificate PDF and send it manually.');button.clicked.connect(lambda checked=False,index=i:self.share(index));self.table.setCellWidget(ui,len(self.headers)+1,button)
+            button=QPushButton('Share');button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward));button.setToolTip('Review the activity message and open WhatsApp.' if self.active_workflow==3 else 'Open WhatsApp. Attach the confirmation PDF and send it manually.' if self.active_workflow==2 else 'Open WhatsApp. Attach the certificate PDF and send it manually.');button.clicked.connect(lambda checked=False,index=i:self.share(index));self.table.setCellWidget(ui,len(self.headers)+1,button)
+        self.append_entry_slots()
         self.table.blockSignals(False)
         for c,h in enumerate(self.headers):
             if h==self.mapping().get('type'):self.table.setItemDelegateForColumn(c,TypeDelegate(self.table))
@@ -284,7 +342,14 @@ class Window(QMainWindow):
     def sheet_is_synced(self):return any(r.get('__fb_source') for r in self.rows) or any(s.get('destination')==self.sheet for s in self.cfg['google'].get('sources',[]))
     def edited(self,item):
         if item.column()>=len(self.headers):return
-        index=self.visible[item.row()];self.rows[index][self.headers[item.column()]]=item.text();self.dirty=True;self.generation+=1
+        if item.row()>=len(self.visible):
+            if not item.text().strip():return
+            while len(self.visible)<=item.row():
+                self.rows.append(self.blank_row());self.visible.append(len(self.rows)-1)
+            self.table.blockSignals(True);self.append_entry_slots();self.table.blockSignals(False)
+        index=self.visible[item.row()]
+        if self.rows[index].get('__fb_source'):return
+        self.rows[index][self.headers[item.column()]]=item.text();self.dirty=True;self.generation+=1
         self.say('Editing... '+('Changes will save when you stop typing.' if self.autosave.isChecked() else 'Click Save to keep your changes.'))
         if self.autosave.isChecked():self.save_timer.start()
     def options_changed(self):
@@ -301,6 +366,8 @@ class Window(QMainWindow):
         self.save_timer.stop()
         if not self.dirty:return True
         try:
+            type_col=self.mapping().get('type')
+            self.rows=[r for r in self.rows if r.get('_row') or any(text(r.get(h)).strip() for h in self.headers if h!=type_col)]
             self.store.save_rows(self.sheet,self.headers,self.rows,self.deleted)
             self.load_table(self.sheet);self.say('Saved. Workbook backups: '+str(self.store.backups))
             self.auto_generate();return True
@@ -356,7 +423,6 @@ class Window(QMainWindow):
         self.rows.append(row);self.dirty=True;self.search.clear();self.category.setCurrentIndex(0);self.render();self.table.scrollToBottom()
         self.table.setCurrentCell(self.table.rowCount()-1,0);self.table.editItem(self.table.item(self.table.rowCount()-1,0))
     def paste_cells(self):
-        if self.sheet_is_synced():self.say('Google worksheets are read-only.');return
         import csv,io
         try:matrix=list(csv.reader(io.StringIO(QApplication.clipboard().text()),delimiter='\t'))
         except csv.Error as e:self.say(str(e));return
@@ -368,9 +434,11 @@ class Window(QMainWindow):
             if ui>=len(self.visible):
                 if self.search.text() or self.category.currentIndex()!=0:
                     self.say('While filtered, paste only fills existing rows. Clear filters to paste new rows.');break
-                row={h:'' for h in self.headers};row.update(__fb_id='',_row=None)
+                row=self.blank_row()
                 self.rows.append(row);self.visible.append(len(self.rows)-1)
             row=self.rows[self.visible[ui]]
+            if row.get('__fb_source'):
+                self.say('Google response rows are read-only. Paste into the empty rows below.');continue
             for c,value in enumerate(values,startcol):
                 if c<len(self.headers):row[self.headers[c]]=value
         self.dirty=True;self.generation+=1;self.render()
@@ -379,8 +447,8 @@ class Window(QMainWindow):
         value,ok=QInputDialog.getText(self,'WhatsApp Country Code','Country code for local numbers starting with 0 (Malaysia: 60):',text=self.cfg.get('country','60'))
         if ok and value.strip().isdigit():self.cfg['country']=value.strip();self.persist()
     def delete_rows(self):
-        if self.sheet_is_synced():self.fail('Manage registrations in the Google source; synced worksheets are read-only.');return
-        selected={self.visible[i.row()] for i in self.table.selectedIndexes()}
+        selected={self.visible[i.row()] for i in self.table.selectedIndexes() if i.row()<len(self.visible)}
+        if any(self.rows[i].get('__fb_source') for i in selected):self.fail('Google response rows cannot be deleted here. Select manual rows only.');return
         if not selected:return
         if QMessageBox.question(self,'Delete Records',f'Delete {len(selected)} records? Reload before saving to undo this change.')!=QMessageBox.StandardButton.Yes:return
         self.deleted.extend(self.rows[i]['_row'] for i in selected if self.rows[i].get('_row'))
@@ -471,8 +539,16 @@ class Window(QMainWindow):
                 else:self.store.reload();self.load_table(self.sheet);self.auto_generate()
         except Exception as e:self.say('Could not monitor Excel: '+str(e))
     def share(self,index):
-        if self.dirty and not self.save():return
+        original=self.rows[index] if index<len(self.rows) else None
+        if original is None:return
+        if self.dirty:
+            col=self.mapping().get('type')
+            new_index=sum(bool(r.get('_row') or any(text(r.get(h)).strip() for h in self.headers if h!=col)) for r in self.rows[:index])
+            if not self.save():return
+            index=new_index
         if index>=len(self.rows):return
+        if self.active_workflow in (2,3):
+            self.share_application(index);return
         rec=self.record(self.rows[index]);entry=self.cache.get(self.cache_key(rec['id']),{})
         current=False
         if rec['type'] in ('donor','volunteer'):
@@ -489,6 +565,27 @@ class Window(QMainWindow):
             url=url.split('?text=')[0]+'?text='+quote(f'Hello {rec["name"] or "there"}, we are contacting you from the community foodbank.')
         webbrowser.open(url)
         self.say('WhatsApp opened. Attach the PDF and send manually; its path has been copied.' if current else 'WhatsApp opened. Send your message manually. If the certificate is not ready, check its status and retry generation.')
+    def share_application(self,index):
+        row=self.rows[index];rec=self.record(row);phone=rec['phone'];pdf=None
+        try:
+            if self.active_workflow==2:
+                self.store.ensure_ids(self.sheet);self.headers,self.rows=self.store.table(self.sheet);row=self.rows[index];rec=self.record(row)
+                pdf=family_pdf(row,self.headers,rec['name'],self.scope()+':'+rec['id'],DATA/'family_confirmations')
+                message=f"Hello {rec['name'] or 'there'}, please review your family application details in the attached PDF. Reply to confirm they are correct or tell us what needs changing."
+            else:
+                cfg=self.cfg.get('event_message',{})
+                if not cfg.get('event'):
+                    self.configure_event();cfg=self.cfg.get('event_message',{})
+                    if not cfg.get('event'):return
+                message=event_message(cfg.get('template',DEFAULT_MESSAGE),dict(cfg,name=rec['name'],phone=phone))
+            approved=self.review_message(message,pdf)
+            if approved is None:return
+            if pdf:
+                QApplication.clipboard().setText(str(pdf));QDesktopServices.openUrl(QUrl.fromLocalFile(str(pdf.parent)))
+            webbrowser.open(message_url(phone,approved,self.cfg.get('country','60')))
+            self.say('WhatsApp opened. Attach the confirmation PDF manually.' if pdf else 'WhatsApp opened. Review and send the activity message manually.')
+        except Exception as e:self.fail(str(e))
+
     def open_output(self):
         folder=DATA/'certificates';folder.mkdir(exist_ok=True);QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
     def closeEvent(self,event):

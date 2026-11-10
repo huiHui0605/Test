@@ -9,11 +9,11 @@ QT_QPA_PLATFORM=offscreen FOODBANK_TEST_SOFFICE=/workspace/foodbank-libreoffice/
   /workspace/foodbank-venv/bin/python -m unittest discover -s tests -v
 ```
 
-Result: **33 tests passed, 0 skipped**.
+Result: **37 tests passed, 0 skipped**.
 
 Coverage:
 
-- Simplified Add Person form saves a real Excel record; settings and advanced actions remain reachable through their menus.
+- Four workflow tabs, continuous empty rows, type defaults, blank-row omission, family PDF field preservation, activity-template validation and cancelled-share behavior; legacy entry form saves a real Excel record; settings and advanced actions remain reachable through their menus.
 
 - English controls, dialog titles, labels, headers, validation errors, and background messages. Chinese input aliases remain supported without becoming interface labels.
 - English type filtering preserves multilingual participant data.
@@ -28,3 +28,5 @@ Coverage:
 `examples/interface.png` shows the English application with fictitious records after two real PDF exports. File pickers use Qt dialogs so their controls do not inherit a non-English native OS dialog.
 
 Not verified: a live Google account/sheet (credentials and sharing permissions were not supplied), Windows PowerPoint COM conversion, live WhatsApp login/sending, and the official donor template (not supplied). Check fonts, long names, and approved template layout on the target Windows computer before production use.
+
+Live Forms/Sheets sync is not verified without the response Sheet URLs and authorized credentials. Access to the supplied public form page was denied by this cloud network; confirmation PDFs therefore use the complete response-sheet fields rather than an assumed form schema.

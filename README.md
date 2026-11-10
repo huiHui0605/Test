@@ -26,11 +26,31 @@ For subsequent launches, run `.venv\Scripts\python.exe main.py` or double-click 
 3. Select `powerpoint` (or `auto`) on Windows with PowerPoint installed. Without PowerPoint, select `libreoffice`; if necessary, enter `C:\Program Files\LibreOffice\program\soffice.exe` as the executable path.
 4. Click **More Actions → Generate / Retry PDFs**. Volunteers and donors should show **PDF ready**. Beneficiaries do not receive certificates.
 5. Click **More Actions → Open PDF Folder** to inspect the output. Check fonts, layout, and long names before sending real certificates.
-6. Use **Add Person** to enter another record. With **Save automatically** and **Create certificates automatically** checked, edits save about 1.4 seconds after typing stops and eligible certificates generate in the background.
+6. Type directly into one of the six empty rows at the bottom to enter another record. With **Save automatically** and **Create certificates automatically** checked, edits save about 1.4 seconds after typing stops and eligible certificates generate in the background.
 
 Types are `volunteer`, `donor`, and `beneficiary`. Imported multilingual headings, names, and recognized type aliases are supported; user data is preserved as entered while application controls and messages are in English.
 
-The main screen shows three everyday actions: **Add Person**, **Open Excel**, and **Sync Google**. Add Person opens a simple form with a type dropdown. Setup options are grouped under **Settings**; manual saving, reloading, PDF retries, and deleting rows are under **More Actions**. Icons always appear alongside text labels. The three-step guide explains the daily workflow: add/edit, check certificate status, then share.
+## Four workflow tabs
+
+- **Volunteer Certificates**: volunteer records and PPTX certificate sharing.
+- **Donor Certificates**: donor records and PPTX certificate sharing.
+- **Family Applications**: family responses and a complete confirmation PDF for the applicant to review.
+- **Volunteer Activities**: volunteer responses and personalized activity messages.
+
+Every tab uses the same Excel-style editing controls. Tabs filter the selected worksheet by record type; use the Worksheet selector to choose the relevant Google response or local worksheet. Each tab remembers its selected worksheet during the session. Volunteer certificate and activity tabs can deliberately use the same registrations, avoiding duplicated people.
+
+Six empty entry rows remain at the bottom. Start typing in any of them to create a record; six new empty slots remain below it. The current tab supplies the type automatically when a Type column is mapped. Empty entry rows are not saved to Excel. If an imported sheet has no Type column, configure its default type in Worksheet Columns. Imported Google response rows remain read-only, but you can add manual records in the blank rows below them. Manual records are not sent back to Google.
+
+**Family confirmation:** select the Family Applications tab, choose its synced response worksheet, then click the applicant's **Share** button. The app creates an A4 PDF containing every original Google question/answer (including unanswered fields), with a request to confirm accuracy or provide corrections. Review the WhatsApp message, click Open WhatsApp, and attach the PDF manually. Files are under `data/family_confirmations`; no PowerPoint or LibreOffice is needed for these forms. This is a review summary, not an approval or an interactive fillable PDF.
+
+**Open Application Form** opens the supplied public form:
+https://docs.google.com/forms/d/e/1FAIpQLScD4cM3iZ_K1s9Lf0UFbMj3hHvrHG9ns9-cVJnRgdPDm_Vlgw/viewform
+
+A public form URL cannot supply private responses. Link the form to a Google Sheet and configure that response Sheet URL and service-account permissions in Google Sheets Connection. Set its type to beneficiary. The cloud environment could not access the form page, so no fixed question list is assumed: all response-sheet headings and values are preserved dynamically.
+
+**Volunteer activity messages:** configure a volunteer Google source and select it under Volunteer Activities. Click **Event Message** to save the event, date, time, location, details, and message template. Supported placeholders: `{name}`, `{phone}`, `{event}`, `{date}`, `{time}`, `{location}`, `{details}`. Each Share button fills the selected applicant's details and opens an editable preview. Cancel sends nothing; Open WhatsApp opens the selected phone number's chat for manual sending. Activity messages do not require a certificate PDF.
+
+Settings and advanced actions remain under **Settings** and **More Actions**. All interface text is English; participant data keeps its original language.
 
 ## Excel records and column mapping
 
@@ -67,9 +87,9 @@ The original template is never edited. A temporary PPTX is filled and converted 
 5. Enter the exact source headings for the name, phone, email, and date columns. Name is required; the others are optional. A unique, nonempty response ID column is strongly recommended.
 6. Enable **Auto sync** (default interval: 60 seconds), or click **Sync Google** manually.
 
-Source fields are retained as `Google · <original heading>` columns alongside normalized columns. Each source owns a separate local worksheet, which is read-only in the app. Add manual records in a local worksheet such as Records.
+Source fields are retained as `Google · <original heading>` columns alongside normalized columns. Each source owns a separate local worksheet, whose imported response rows are read-only in the app. Manual records can be entered in the empty rows below.
 
-Sync is **Google → local Excel only**; it never writes to Google. Stable response IDs update existing records without duplicating them. Records removed from Google are not automatically deleted from local history. New volunteer/donor responses trigger certificate checks; beneficiaries are synced without certificates.
+Sync is **Google → local Excel only**; it never writes to Google. Stable response IDs update existing records without duplicating them. Records removed from Google are not automatically deleted from local history. New volunteer/donor responses trigger certificate checks; beneficiaries are synced without certificates and can receive application confirmation PDFs from the Family Applications tab.
 
 **Without a unique ID column, identity is based on Google row numbers: sources must be append-only. Do not sort, insert, or delete existing response rows.** Use a new destination worksheet when changing a source, registration type, or identity-column scheme. A timestamp is suitable only if it is truly unique.
 
@@ -97,4 +117,4 @@ QT_QPA_PLATFORM=offscreen FOODBANK_TEST_SOFFICE=/usr/bin/libreoffice .venv/bin/p
 
 Google tests use mocked API responses; they do not verify your live account. WhatsApp tests intercept browser calls and send no messages. Windows PowerPoint COM export must be checked on the target machine.
 
-Code: `main.py` (English desktop UI/background tasks), `storage.py` (Excel), `certificates.py` (PPTX/PDF/share URLs), `google_sync.py` (Google read adapter), and `tests/`. `tools/create_examples.py` regenerates fictitious examples; `tools/package_source.py` packages the allowlisted source/assets without live records, credentials, caches, or virtual environments. This is Python source, not a Windows executable installer.
+Code: `applications.py` (family confirmation PDFs and activity messages), `main.py` (English desktop UI/background tasks), `storage.py` (Excel), `certificates.py` (PPTX/PDF/share URLs), `google_sync.py` (Google read adapter), and `tests/`. `tools/create_examples.py` regenerates fictitious examples; `tools/package_source.py` packages the allowlisted source/assets without live records, credentials, caches, or virtual environments. This is Python source, not a Windows executable installer.
