@@ -24,7 +24,7 @@ def make_template(path,role):
     label(.7,.5,'COMMUNITY FOODBANK',18,'176B70')
     label(1.55,.9,'CERTIFICATE OF APPRECIATION',29)
     label(2.65,.6,'Presented with gratitude to',18)
-    label(3.3,.8,'{{NAME}}',36,'176B70')
+    label(3.3,.8,'Name',36,'176B70')
     label(4.45,1.1,f'For your generous contribution as a {role}\nand your support for our community.',19)
     label(6.0,.5,'Attendance: Date No',16)
     label(6.55,.5,'Certificate: Cert No',16)

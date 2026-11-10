@@ -114,11 +114,11 @@ class TemplateDialog(QDialog):
             path=QLineEdit(cfg.get('templates',{}).get(k,{}).get('path',''));button=QPushButton('Choose PPTX')
             line.addWidget(path);line.addWidget(button);button.clicked.connect(lambda checked=False,key=k:self.choose(key))
             self.paths[k]=path;form.addRow(label+' PPTX',row)
-            marker=QLineEdit(cfg.get('templates',{}).get(k,{}).get('marker','auto'));self.tokens[k]=marker
+            marker=QLineEdit(cfg.get('templates',{}).get(k,{}).get('marker','Name'));self.tokens[k]=marker
             form.addRow(label+' name marker',marker)
         self.engine=QComboBox();self.engine.addItems(['auto','powerpoint','libreoffice']);self.engine.setCurrentText(cfg.get('engine','auto'));form.addRow('PDF converter',self.engine)
         self.soffice=QLineEdit(cfg.get('soffice',''));form.addRow('LibreOffice path (optional)',self.soffice)
-        label=QLabel('auto matches name / Name / {{NAME}}, including markers split across text runs.\nYou can also enter the exact text to replace. Use Date No for attendance date and Cert No for certificate number. All markers must be editable text.\nOn Windows, auto uses PowerPoint; on Linux/macOS, it uses LibreOffice.');label.setWordWrap(True);form.addRow(label)
+        label=QLabel('The default name marker is Name, including text split across formatting runs. Legacy {{NAME}} templates are also supported.\nYou can also enter the exact text to replace. Use Date No for attendance date and Cert No for certificate number. All markers must be editable text.\nOn Windows, auto uses PowerPoint; on Linux/macOS, it uses LibreOffice.');label.setWordWrap(True);form.addRow(label)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.validate);buttons.rejected.connect(self.reject);form.addRow(buttons)
     def choose(self,k):
@@ -137,7 +137,7 @@ class TemplateDialog(QDialog):
                     QMessageBox.warning(self,'Invalid Template',str(e));return
         self.accept()
     def value(self):
-        return {'templates':{k:{'path':box.text().strip(),'marker':self.tokens[k].text().strip() or 'auto'} for k,box in self.paths.items()},'engine':self.engine.currentText(),'soffice':self.soffice.text().strip()}
+        return {'templates':{k:{'path':box.text().strip(),'marker':self.tokens[k].text().strip() or 'Name'} for k,box in self.paths.items()},'engine':self.engine.currentText(),'soffice':self.soffice.text().strip()}
 
 
 class GoogleDialog(QDialog):
@@ -193,7 +193,9 @@ class Window(QMainWindow):
         for k,v in default.items():self.cfg.setdefault(k,v)
         for k in ('volunteer',):
             template=ROOT/'templates'/f'{k}_template.pptx'
-            if template.exists():self.cfg['templates'].setdefault(k,{'path':str(template),'marker':'auto'})
+            if template.exists():self.cfg['templates'].setdefault(k,{'path':str(template),'marker':'Name'})
+        volunteer=self.cfg['templates'].get('volunteer')
+        if volunteer is not None and volunteer.get('marker','auto') in ('','auto'):volunteer['marker']='Name'
         self.active_workflow=0;self.tab_sheets={}
         self.store=ExcelStore(self.cfg['workbook']);self.sheet='';self.rows=[];self.headers=[];self.visible=[];self.deleted=[]
         self.dirty=False;self.busy_pdf=False;self.busy_sync=False;self.pending_pdf=False;self.jobs=set();self.generation=0
@@ -580,7 +582,7 @@ class Window(QMainWindow):
         current=False
         if rec['type'] in ('volunteer',):
             cfg=self.cfg['templates'].get(rec['type'],{})
-            try:current=entry.get('signature')==certificate_signature(rec,cfg['path'],cfg.get('marker','auto'),self.cfg.get('engine','auto')) and Path(entry.get('pdf','')).is_file()
+            try:current=entry.get('signature')==certificate_signature(rec,cfg['path'],cfg.get('marker','Name'),self.cfg.get('engine','auto')) and Path(entry.get('pdf','')).is_file()
             except (KeyError,OSError):pass
             if current:
                 QApplication.clipboard().setText(entry['pdf'])

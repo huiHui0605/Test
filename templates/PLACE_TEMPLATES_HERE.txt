@@ -1,7 +1,8 @@
 Use Certificate Templates in the desktop app to select your approved PPTX files.
 The original volunteer_template.pptx is included.
 Clearly labeled demo templates are in ../examples/.
-Use editable {{NAME}} or Name text, or configure an exact custom name marker.
+Use editable Name text for the recipient; the default name marker is Name.
+Legacy {{NAME}} text is also supported.
 Use Date No for attendance date and Cert No for certificate number.
 Choose all three source columns above the Volunteer Certificates table.
 Legacy markers: {{DATE}}, {{TYPE}}, {{ID}}; {{CERT_NO}} is also supported.

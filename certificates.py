@@ -73,7 +73,7 @@ def replace_paragraph(paragraph, pattern, replacement):
 
 def field_patterns(name_marker='auto'):
     return {
-        'NAME':r'\{\{\s*name\s*\}\}|(?<!\w)name(?!\w)' if name_marker=='auto' else re.escape(name_marker),
+        'NAME':r'\{\{\s*name\s*\}\}|(?<!\w)name(?!\w)' if name_marker in ('auto','Name') else re.escape(name_marker),
         'DATE':r'\{\{\s*DATE\s*\}\}|(?<!\w)Date\s+No(?!\w)',
         'CERT_NO':r'\{\{\s*CERT_NO\s*\}\}|(?<!\w)Cert\s+No(?!\w)',
         'TYPE':r'\{\{\s*TYPE\s*\}\}',
@@ -143,7 +143,7 @@ def generate_one(record, templates, output_dir, previous=None, engine='auto', so
     for field,label,key in [('DATE','Attendance date','date'),('CERT_NO','Certificate number','cert_no')]:
         if re.search(field_patterns()[field],template_text,re.I) and not str(record.get(key,'')).strip():
             return {'status':label+' required: select its column and fill in the value'}
-    marker=cfg.get('marker','auto') or 'auto'
+    marker=cfg.get('marker','Name') or 'Name'
     sig=certificate_signature(record,template,marker,engine)
     previous=previous or {}
     if previous.get('signature')==sig and Path(previous.get('pdf','')).is_file(): return previous

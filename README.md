@@ -22,7 +22,7 @@ For subsequent launches, run `.venv\Scripts\python.exe main.py` or double-click 
 ## Try the sample workflow
 
 1. Click **Open Excel** and select `examples/sample_records.xlsx`. The sample contains two fictitious records and no real phone numbers. Changes are saved to the selected workbook, so copy it first if you want to keep a pristine sample.
-2. Click **Settings → Certificate Templates**. Select `examples/volunteer_sample.pptx`. Leave the name marker as `auto`. Above the volunteer table, select Participant Name, Date, and Certificate Number for the three certificate columns.
+2. Click **Settings → Certificate Templates**. Select `examples/volunteer_sample.pptx`. Leave the name marker as `Name`. Above the volunteer table, select Participant Name, Date, and Certificate Number for the three certificate columns.
 3. Select `powerpoint` (or `auto`) on Windows with PowerPoint installed. Without PowerPoint, select `libreoffice`; if necessary, enter `C:\Program Files\LibreOffice\program\soffice.exe` as the executable path.
 4. Click **More Actions → Generate / Retry PDFs**. Volunteers should show **PDF ready**. Beneficiaries do not receive certificates.
 5. Click **More Actions → Open PDF Folder** to inspect the output. Check fonts, layout, and long names before sending real certificates.
@@ -65,7 +65,7 @@ Saving uses a temporary file, atomic replacement, an application lock, and exter
 
 ## Certificate templates
 
-The recipient name must be editable PPTX text, not text baked into an image. The `auto` marker detects the standalone word `name` (case-insensitive) or `{{NAME}}`, including markers split across text runs. Alternatively, enter the exact text to replace. Text boxes, grouped shapes, table cells, and layout/master text are supported. Use the editable text **Date No** for attendance date and **Cert No** for certificate number. The main Volunteer Certificates screen has **Name column**, **Attendance date column**, and **Certificate number column** selectors. Each selection is saved per workbook/worksheet and applies to every record in that worksheet. Select columns, not individual row numbers.
+The recipient name must be editable PPTX text, not text baked into an image. The default `Name` marker (and legacy `auto` setting) detects the standalone word `name` (case-insensitive) or `{{NAME}}`, including markers split across text runs. Alternatively, enter the exact text to replace. Text boxes, grouped shapes, table cells, and layout/master text are supported. Use the editable text **Date No** for attendance date and **Cert No** for certificate number. The main Volunteer Certificates screen has **Name column**, **Attendance date column**, and **Certificate number column** selectors. Each selection is saved per workbook/worksheet and applies to every record in that worksheet. Select columns, not individual row numbers.
 
 Use the actual attendance date, not the form submission timestamp. The certificate number is read from the chosen column; the app does not invent or auto-increment numbers. Store numbers such as `0007` as Excel text to preserve leading zeros. If the template contains a date/number marker but the mapped value is blank, the app reports the missing field and does not export an incomplete certificate. Changing a date, number, or column selection invalidates the cached PDF.
 
