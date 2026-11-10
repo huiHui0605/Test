@@ -1,7 +1,8 @@
 Use Certificate Templates in the desktop app to select your approved PPTX files.
 The original volunteer_template.pptx is included.
-An official donor template was not supplied; choose it in the app when available.
 Clearly labeled demo templates are in ../examples/.
 Use editable {{NAME}} or Name text, or configure an exact custom name marker.
-Optional markers: {{DATE}}, {{TYPE}}, {{ID}}.
+Use Date No for attendance date and Cert No for certificate number.
+Choose all three source columns above the Volunteer Certificates table.
+Legacy markers: {{DATE}}, {{TYPE}}, {{ID}}; {{CERT_NO}} is also supported.
 Do not put participant data or Google service-account credentials in this folder.

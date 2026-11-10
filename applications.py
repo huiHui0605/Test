@@ -9,7 +9,7 @@ from PySide6.QtGui import QTextDocument,QPdfWriter,QPageSize
 from certificates import whatsapp_url
 from storage import text
 
-FAMILY_FORM_URL='https://docs.google.com/forms/d/e/1FAIpQLScD4cM3iZ_K1s9Lf0UFbMj3hHvrHG9ns9-cVJnRgdPDm_Vlgw/viewform'
+FAMILY_FORM_URL='https://docs.google.com/forms/d/1Z8bwgdGnaaTqHR5WCY-RQu0gD9v-o25xoUGByiqW2Ok/edit'
 DEFAULT_MESSAGE='Hello {name}, thank you for registering for {event}.\nDate: {date}\nTime: {time}\nLocation: {location}\n\n{details}\n\nPlease reply to confirm your attendance.'
 
 def event_message(template,values):

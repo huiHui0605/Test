@@ -9,7 +9,7 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
 META = ('__fb_id', '__fb_source', '__fb_key')
-DEFAULT_HEADERS = ['Participant Name', 'Type', 'Phone', 'Email', 'Date']
+DEFAULT_HEADERS = ['Participant Name', 'Type', 'Phone', 'Email', 'Date', 'Certificate Number']
 
 
 def text(value):
@@ -123,6 +123,11 @@ class ExcelStore:
         """Only write changed cells; preserve original numeric/date/formula cells."""
         def mutate(wb):
             ws = wb[sheet]
+            display = self.display_headers(ws)
+            for header in headers:
+                if header not in display:
+                    if header in META:raise ValueError('Reserved metadata column')
+                    ws.cell(1,ws.max_column+1,header);display=self.display_headers(ws)
             all_headers = self.metadata(ws)
             display = self.display_headers(ws)
             columns = {h:display.index(h)+1 for h in headers}

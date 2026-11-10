@@ -59,7 +59,7 @@ class DesktopTests(unittest.TestCase):
         w.load_table('Records');w.category.setCurrentText('volunteer')
         self.assertEqual(len(w.visible),1);self.assertEqual(w.table.item(0,0).text(),'王小明')
         w.category.setCurrentText('All types');self.assertEqual(len(w.visible),1)
-        w.workflow_tabs.setCurrentIndex(2);self.assertEqual(len(w.visible),1);self.assertEqual(w.table.item(0,0).text(),'Example Family')
+        w.workflow_tabs.setCurrentIndex(main.FAMILY_TAB);self.assertEqual(len(w.visible),1);self.assertEqual(w.table.item(0,0).text(),'Example Family')
     def test_simple_add_person_form_and_action_menus(self):
         w=self.window
         def fill_form():
@@ -74,8 +74,8 @@ class DesktopTests(unittest.TestCase):
         self.assertIn('Delete Selected Rows',[a.text() for a in w.actions_menu.actions()])
         self.assertIn('Generate / Retry PDFs',[a.text() for a in w.actions_menu.actions()])
 
-    def test_four_tabs_and_continuous_blank_rows(self):
-        w=self.window;self.assertEqual(w.workflow_tabs.count(),4)
+    def test_three_tabs_and_continuous_blank_rows(self):
+        w=self.window;self.assertEqual(w.workflow_tabs.count(),3)
         self.assertEqual(w.table.rowCount(),6)
         w.table.item(4,0).setText('Manual Volunteer')
         self.assertEqual(w.table.rowCount(),11)
@@ -83,18 +83,18 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(len(w.rows),1);self.assertEqual(w.rows[0]['Type'],'volunteer')
         self.assertEqual(w.table.rowCount(),7)
         w.workflow_tabs.setCurrentIndex(1);self.assertEqual(len(w.visible),0)
-        w.table.item(0,0).setText('Manual Donor');w.save()
+        w.table.item(0,0).setText('Manual Family');w.save()
         self.assertEqual(len(w.store.table('Records')[1]),2)
-        self.assertEqual(w.table.item(0,0).text(),'Manual Donor')
-        w.workflow_tabs.setCurrentIndex(3);self.assertEqual(w.table.item(0,0).text(),'Manual Volunteer')
+        self.assertEqual(w.table.item(0,0).text(),'Manual Family')
+        w.workflow_tabs.setCurrentIndex(main.ACTIVITY_TAB);self.assertEqual(w.table.item(0,0).text(),'Manual Volunteer')
     def test_family_pdf_and_activity_share_preview(self):
         w=self.window;h,_=w.store.table('Records')
         w.store.save_rows('Records',h,[{'Participant Name':'Family Example','Type':'beneficiary','Phone':'0123456789'},{'Participant Name':'Volunteer Example','Type':'volunteer','Phone':'0123456789'}])
-        w.load_table('Records');w.workflow_tabs.setCurrentIndex(2)
+        w.load_table('Records');w.workflow_tabs.setCurrentIndex(main.FAMILY_TAB)
         with patch.object(w,'review_message',return_value=None),patch('main.webbrowser.open') as browser:
             w.share(w.visible[0]);browser.assert_not_called()
         self.assertEqual(len(list((self.root/'family_confirmations').glob('*.pdf'))),1)
-        w.workflow_tabs.setCurrentIndex(3);w.cfg['event_message']={'event':'Food Packing','date':'Saturday','time':'09:00','location':'Main Hall','details':'Bring water.','template':main.DEFAULT_MESSAGE}
+        w.workflow_tabs.setCurrentIndex(main.ACTIVITY_TAB);w.cfg['event_message']={'event':'Food Packing','date':'Saturday','time':'09:00','location':'Main Hall','details':'Bring water.','template':main.DEFAULT_MESSAGE}
         with patch.object(w,'review_message',side_effect=lambda message,pdf:message) as preview,patch('main.webbrowser.open') as browser:
             w.share(w.visible[0]);message=preview.call_args.args[0]
             self.assertIn('Volunteer Example',message);self.assertIn('Main Hall',message);self.assertIn('Bring water.',message)
@@ -119,18 +119,18 @@ class DesktopTests(unittest.TestCase):
         h,_=w.store.table('Records')
         w.store.save_rows('Records',h,[{'Participant Name':'Example Volunteer','Type':'volunteer','Date':'2026-11-02'}, {'Participant Name':'Example Donor','Type':'donor','Date':'2026-11-02'}, {'Participant Name':'Example Family','Type':'beneficiary'}])
         w.load_table('Records');w.cfg.update(engine='libreoffice',soffice=os.environ['FOODBANK_TEST_SOFFICE'],auto_pdf=True)
-        w.cfg['templates']={'volunteer':{'path':str(main.ROOT/'templates/volunteer_template.pptx'),'marker':'auto'},'donor':{'path':str(main.ROOT/'examples/donor_sample.pptx'),'marker':'auto'}}
+        w.cfg['templates']={'volunteer':{'path':str(main.ROOT/'templates/volunteer_template.pptx'),'marker':'auto'}}
         w.auto_generate()
         deadline=time.monotonic()+30
         while w.busy_pdf and time.monotonic()<deadline:pump(100)
         self.assertFalse(w.busy_pdf)
-        for row in w.rows[:2]:
+        for row in w.rows[:1]:
             rec=w.record(row);entry=w.cache[w.cache_key(rec['id'])]
             self.assertEqual(entry['status'],'PDF ready',entry)
             import subprocess
             extracted=subprocess.check_output(['pdftotext',entry['pdf'],'-'],text=True)
             self.assertIn(rec['name'],extracted)
-        self.assertEqual(len(list((self.root/'certificates').rglob('*.pdf'))),2)
+        self.assertEqual(len(list((self.root/'certificates').rglob('*.pdf'))),1)
         with patch('main.webbrowser.open') as browser,patch('main.QDesktopServices.openUrl') as folder:
             w.share(0);self.assertEqual(browser.call_count,1);self.assertEqual(folder.call_count,1)
             self.assertTrue(QApplication.clipboard().text().endswith('.pdf'))
@@ -154,11 +154,37 @@ class DesktopTests(unittest.TestCase):
         self.assertFalse(w.table.item(0,0).flags() & main.Qt.ItemFlag.ItemIsEditable)
     def test_auto_pdf_all_worksheets_in_background(self):
         w=self.window;w.cfg['auto_pdf']=True
-        b={'sheet':'Google Donors','source':'abc','headers':['Participant Name','Type'],'rows':[{'Participant Name':'Donor','Type':'donor','__fb_source':'abc','__fb_key':'1'}]}
+        b={'sheet':'Google Volunteers','source':'abc','headers':['Participant Name','Type'],'rows':[{'Participant Name':'Volunteer','Type':'volunteer','__fb_source':'abc','__fb_key':'1'}]}
         w.store.merge_google([b]);w.load_table('Records')
         with patch('main.generate_one',return_value={'status':'PDF ready','pdf':'fake','signature':'s'}) as generate:
             w.auto_generate();pump(150)
-            self.assertEqual(generate.call_count,1);self.assertEqual(generate.call_args.args[0]['name'],'Donor');self.assertFalse(w.busy_pdf)
+            self.assertEqual(generate.call_count,1);self.assertEqual(generate.call_args.args[0]['name'],'Volunteer');self.assertFalse(w.busy_pdf)
+    def test_certificate_columns_persist_and_retired_donors_stay_in_excel(self):
+        w=self.window;h,_=w.store.table('Records');h+=['Printed Name','Event Day','Reference']
+        w.store.save_rows('Records',h,[{'Participant Name':'Volunteer','Type':'volunteer','Printed Name':'Alice','Event Day':'2026-12-01','Reference':'0007'},{'Participant Name':'Historical Donor','Type':'donor'}])
+        w.load_table('Records')
+        for key,col in [('name','Printed Name'),('date','Event Day'),('cert_no','Reference')]:w.column_boxes[key].setCurrentText(col)
+        rec=w.record(w.rows[0]);self.assertEqual((rec['name'],rec['date'],rec['cert_no']),('Alice','2026-12-01','0007'))
+        w.load_table('Records');self.assertEqual(w.column_boxes['cert_no'].currentText(),'Reference')
+        self.assertEqual(len(w.rows),2);self.assertEqual(len(w.visible),1)
+        w.cfg['auto_pdf']=True
+        with patch('main.generate_one',return_value={'status':'Test'}) as generate:
+            w.auto_generate();pump(150)
+            self.assertEqual(generate.call_count,1);self.assertEqual(generate.call_args.args[0]['type'],'volunteer')
+        dialog=main.TemplateDialog(w.cfg,w);self.assertNotIn('donor',dialog.paths);dialog.close()
+        dialog=main.GoogleDialog({},w);dialog.add({});box=dialog.table.cellWidget(0,0)
+        self.assertEqual([box.itemText(i) for i in range(box.count())],['volunteer','beneficiary']);dialog.close()
+
+    def test_existing_workbook_gets_certificate_column_without_losing_ids(self):
+        from openpyxl import Workbook
+        w=self.window;old=self.root/'legacy.xlsx';book=Workbook();sheet=book.active;sheet.title='Records'
+        sheet.append(['Participant Name','Type','Phone','Email','Date','__fb_id']);sheet.append(['Alice','volunteer','','','2026-12-01','stable-id']);book.save(old);book.close()
+        w.store=main.ExcelStore(old);w.load_table('Records')
+        self.assertIn('Certificate Number',w.headers)
+        w.table.item(0,w.headers.index('Certificate Number')).setText('0007');self.assertTrue(w.save())
+        row=w.store.table('Records')[1][0];self.assertEqual(row['__fb_id'],'stable-id');self.assertEqual(row['Certificate Number'],'0007')
+        self.assertEqual(w.column_boxes['cert_no'].currentText(),'Certificate Number')
+
     def test_external_change_during_edit_not_overwritten(self):
         w=self.window;w.add_row();w.table.item(0,0).setText('Local')
         other=main.ExcelStore(w.store.path);h,_=other.table('Records');other.save_rows('Records',h,[{'Participant Name':'External'}])

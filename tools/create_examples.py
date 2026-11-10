@@ -26,17 +26,17 @@ def make_template(path,role):
     label(2.65,.6,'Presented with gratitude to',18)
     label(3.3,.8,'{{NAME}}',36,'176B70')
     label(4.45,1.1,f'For your generous contribution as a {role}\nand your support for our community.',19)
-    label(6.0,.5,'Date: {{DATE}}',16)
+    label(6.0,.5,'Attendance: Date No',16)
+    label(6.55,.5,'Certificate: Cert No',16)
     label(7.15,.4,'DEMO TEMPLATE — replace with your organization’s approved design',11)
     p.save(path)
 
 
 def main():
     target=ROOT/'examples';target.mkdir(exist_ok=True)
-    for k in ('volunteer','donor'):make_template(target/f'{k}_sample.pptx',k)
-    w=Workbook();s=w.active;s.title='Records';s.append(['Participant Name','Type','Phone','Email','Date'])
-    s.append(['Example Volunteer','volunteer','','','2026-11-02'])
-    s.append(['Example Donor','donor','','','2026-11-02'])
+    for k in ('volunteer',):make_template(target/f'{k}_sample.pptx',k)
+    w=Workbook();s=w.active;s.title='Records';s.append(['Participant Name','Type','Phone','Email','Date','Certificate Number'])
+    s.append(['Example Volunteer','volunteer','','','2026-11-02','FB-2026-001'])
     s.append(['Example Family','beneficiary','','','2026-11-02'])
     s.freeze_panes='A2';s.column_dimensions['A'].width=27
     w.save(target/'sample_records.xlsx');w.close()

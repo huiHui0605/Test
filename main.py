@@ -18,13 +18,16 @@ from certificates import kind, markers, generate_one, certificate_signature, wha
 from google_sync import fetch
 from applications import FAMILY_FORM_URL,DEFAULT_MESSAGE,event_message,message_url,family_pdf
 
+FAMILY_TAB=1
+ACTIVITY_TAB=2
 ROOT=Path(__file__).resolve().parent
 DATA=Path(os.environ.get('FOODBANK_DATA_DIR',str(ROOT/'data'))).expanduser().resolve()
 SETTINGS=DATA/'settings.json'
 ALIASES={'name':['participantname','name','fullname','姓名','名字','namapenuh','nama'],
          'type':['type','role','category','类型','類型'],
          'phone':['phone','phonenumber','contactnumber','whatsapp','电话','telefon'],
-         'date':['date','timestamp','日期','tarikh']}
+         'date':['attendancedate','dateno','date','日期','出席日期','tarikh'],
+         'cert_no':['certificatenumber','certificateno','certno','感谢状编号']}
 
 
 def norm(value):return ''.join(c for c in value.casefold() if c.isalnum())
@@ -76,7 +79,7 @@ class RecordTable(QTableWidget):
 
 class TypeDelegate(QStyledItemDelegate):
     def createEditor(self,parent,option,index):
-        box=QComboBox(parent);box.setEditable(True);box.addItems(['','volunteer','donor','beneficiary']);return box
+        box=QComboBox(parent);box.setEditable(True);box.addItems(['','volunteer','beneficiary']);return box
     def setEditorData(self,editor,index):editor.setCurrentText(index.data() or '')
     def setModelData(self,editor,model,index):model.setData(index,editor.currentText())
 
@@ -85,13 +88,13 @@ class MappingDialog(QDialog):
     def __init__(self, headers, current, parent=None):
         super().__init__(parent);self.setWindowTitle('Worksheet Column Mapping');self.resize(490,280)
         layout=QFormLayout(self);self.fields={}
-        for key,label in [('name','Participant name'),('type','Type'),('phone','WhatsApp phone'),('date','Date')]:
+        for key,label in [('name','Participant name'),('type','Type'),('phone','WhatsApp phone'),('date','Attendance date'),('cert_no','Certificate number')]:
             box=QComboBox();box.addItems(['(Not configured)']+headers)
             guess=next((h for h in headers if norm(h) in ALIASES[key]),'')
             chosen=current.get(key,guess)
             box.setCurrentIndex(max(0,box.findText(chosen)))
             self.fields[key]=box;layout.addRow(label,box)
-        self.default=QComboBox();self.default.addItems(['Use Type column','volunteer','donor','beneficiary'])
+        self.default=QComboBox();self.default.addItems(['Use Type column','volunteer','beneficiary'])
         self.default.setCurrentText(current.get('default_type','Use Type column'))
         layout.addRow('Default worksheet type',self.default)
         label=QLabel('Choose a default type if the worksheet has no Type column.\nBeneficiaries do not receive certificates.');label.setWordWrap(True);layout.addRow(label)
@@ -106,7 +109,7 @@ class TemplateDialog(QDialog):
     def __init__(self, cfg, parent=None):
         super().__init__(parent);self.setWindowTitle('Certificate Templates');self.resize(760,340)
         form=QFormLayout(self);self.paths={};self.tokens={}
-        for k,label in [('volunteer','Volunteer'),('donor','Donor')]:
+        for k,label in [('volunteer','Volunteer')]:
             row=QWidget();line=QHBoxLayout(row);line.setContentsMargins(0,0,0,0)
             path=QLineEdit(cfg.get('templates',{}).get(k,{}).get('path',''));button=QPushButton('Choose PPTX')
             line.addWidget(path);line.addWidget(button);button.clicked.connect(lambda checked=False,key=k:self.choose(key))
@@ -115,7 +118,7 @@ class TemplateDialog(QDialog):
             form.addRow(label+' name marker',marker)
         self.engine=QComboBox();self.engine.addItems(['auto','powerpoint','libreoffice']);self.engine.setCurrentText(cfg.get('engine','auto'));form.addRow('PDF converter',self.engine)
         self.soffice=QLineEdit(cfg.get('soffice',''));form.addRow('LibreOffice path (optional)',self.soffice)
-        label=QLabel('auto matches name / Name / {{NAME}}, including markers split across text runs.\nYou can also enter the exact text to replace. Names must be editable text, not an image.\nOn Windows, auto uses PowerPoint; on Linux/macOS, it uses LibreOffice.');label.setWordWrap(True);form.addRow(label)
+        label=QLabel('auto matches name / Name / {{NAME}}, including markers split across text runs.\nYou can also enter the exact text to replace. Use Date No for attendance date and Cert No for certificate number. All markers must be editable text.\nOn Windows, auto uses PowerPoint; on Linux/macOS, it uses LibreOffice.');label.setWordWrap(True);form.addRow(label)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.validate);buttons.rejected.connect(self.reject);form.addRow(buttons)
     def choose(self,k):
@@ -142,11 +145,12 @@ class GoogleDialog(QDialog):
     def __init__(self,cfg,parent=None):
         super().__init__(parent);self.setWindowTitle('Google Sheets Settings');self.resize(1150,480)
         layout=QVBoxLayout(self)
-        label=QLabel('1. Enable the Sheets API in Google Cloud, create a service account, and download its JSON key.\n2. Share the Google Sheet with the client_email in that JSON file as a Viewer.\n3. Add one row per source and enter exact column headings. Sync is read-only; local edits are not sent to Google.\nWithout a unique ID, records use row numbers: only append responses; do not sort, insert, or delete existing rows.');label.setWordWrap(True);layout.addWidget(label)
+        label=QLabel('Use the response Google Sheet URL, not the Google Form URL. For Tally, connect Tally to Google Sheets first.\n1. Enable the Sheets API in Google Cloud, create a service account, and download its JSON key.\n2. Share the Google Sheet with the client_email in that JSON file as a Viewer.\n3. Add one row per source and enter exact column headings. Sync is read-only; local edits are not sent to Google.\nWithout a unique ID, records use row numbers: only append responses; do not sort, insert, or delete existing rows.');label.setWordWrap(True);layout.addWidget(label)
         row=QHBoxLayout();self.credentials=QLineEdit(cfg.get('credentials',''));button=QPushButton('Choose Credentials JSON');button.clicked.connect(self.choose)
         row.addWidget(self.credentials);row.addWidget(button);layout.addLayout(row)
         self.table=QTableWidget(0,len(self.columns));self.table.setHorizontalHeaderLabels([label for _,label in self.columns]);self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents);layout.addWidget(self.table)
-        for source in cfg.get('sources',[]):self.add(source)
+        for source in cfg.get('sources',[]):
+            if source.get('type')!='donor':self.add(source)
         buttons=QHBoxLayout();add=QPushButton('Add Source');add.clicked.connect(lambda:self.add({}));delete=QPushButton('Remove Selected Sources');delete.clicked.connect(self.remove)
         buttons.addWidget(add);buttons.addWidget(delete);self.enabled=QCheckBox('Auto sync');self.enabled.setChecked(cfg.get('enabled',False));buttons.addWidget(self.enabled)
         self.interval=QSpinBox();self.interval.setRange(15,3600);self.interval.setValue(cfg.get('interval',60));self.interval.setSuffix(' seconds');buttons.addWidget(self.interval);layout.addLayout(buttons)
@@ -158,7 +162,7 @@ class GoogleDialog(QDialog):
         r=self.table.rowCount();self.table.insertRow(r)
         for c,(key,_) in enumerate(self.columns):
             if key=='type':
-                box=QComboBox();box.addItems(['volunteer','beneficiary','donor']);box.setCurrentText(source.get(key,'volunteer'));self.table.setCellWidget(r,c,box)
+                box=QComboBox();box.addItems(['volunteer','beneficiary']);box.setCurrentText(source.get(key,'volunteer'));self.table.setCellWidget(r,c,box)
             else:self.table.setItem(r,c,QTableWidgetItem(source.get(key,'Form Responses 1!A1:ZZ' if key=='range' else '')))
     def remove(self):
         for r in sorted({i.row() for i in self.table.selectedIndexes()},reverse=True):self.table.removeRow(r)
@@ -187,7 +191,7 @@ class Window(QMainWindow):
         default={'workbook':str(DATA/'community.xlsx'),'mapping':{},'auto_pdf':True,'autosave':True,'country':'60','templates':{},'google':{}}
         self.cfg=read_json(SETTINGS,default)
         for k,v in default.items():self.cfg.setdefault(k,v)
-        for k in ('volunteer','donor'):
+        for k in ('volunteer',):
             template=ROOT/'templates'/f'{k}_template.pptx'
             if template.exists():self.cfg['templates'].setdefault(k,{'path':str(template),'marker':'auto'})
         self.active_workflow=0;self.tab_sheets={}
@@ -206,7 +210,7 @@ class Window(QMainWindow):
             self.settings_menu.addAction(label,fn)
         settings_button.setMenu(self.settings_menu);heading.addWidget(settings_button)
         self.workflow_tabs=QTabBar();self.workflow_tabs.setExpanding(True)
-        for label in ['Volunteer Certificates','Donor Certificates','Family Applications','Volunteer Activities']:self.workflow_tabs.addTab(label)
+        for label in ['Volunteer Certificates','Family Applications','Volunteer Activities']:self.workflow_tabs.addTab(label)
         layout.addWidget(self.workflow_tabs);self.workflow_tabs.currentChanged.connect(self.change_workflow)
         guide=QLabel('Type in an empty row to add a person. Use Share to review and send on WhatsApp.')
         guide.setObjectName('guide');guide.setWordWrap(True);layout.addWidget(guide)
@@ -229,7 +233,13 @@ class Window(QMainWindow):
         filters.addWidget(QLabel('Worksheet'))
         self.sheets=QComboBox();self.sheets.setToolTip('Choose which worksheet to display.');self.sheets.currentTextChanged.connect(self.change_sheet);filters.addWidget(self.sheets)
         self.search=QLineEdit();self.search.setPlaceholderText('Search for a person...');self.search.addAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView),QLineEdit.ActionPosition.LeadingPosition);self.search.textChanged.connect(self.render);filters.addWidget(self.search,1)
-        self.category=QComboBox();self.category.addItems(['All types','volunteer','donor','beneficiary']);self.category.currentTextChanged.connect(self.render);filters.addWidget(self.category)
+        self.category=QComboBox();self.category.addItems(['All types','volunteer','beneficiary']);self.category.currentTextChanged.connect(self.render);filters.addWidget(self.category)
+        self.certificate_columns=QWidget();column_layout=QHBoxLayout(self.certificate_columns);column_layout.setContentsMargins(0,0,0,0)
+        self.column_boxes={}
+        for key,label in [('name','Name column'),('date','Attendance date column'),('cert_no','Certificate number column')]:
+            column_layout.addWidget(QLabel(label));box=QComboBox();box.setMinimumWidth(150);column_layout.addWidget(box,1);self.column_boxes[key]=box
+            box.currentIndexChanged.connect(self.certificate_mapping_changed)
+        layout.addWidget(self.certificate_columns)
         self.table=RecordTable();self.table.setAlternatingRowColors(True);self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows);self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive);self.table.verticalHeader().setDefaultSectionSize(38);self.table.itemChanged.connect(self.edited);layout.addWidget(self.table,1)
         footer=QHBoxLayout();layout.addLayout(footer)
         self.autosave=QCheckBox('Save automatically');self.autosave.setChecked(self.cfg['autosave']);self.autosave.toggled.connect(self.options_changed);footer.addWidget(self.autosave)
@@ -245,10 +255,10 @@ class Window(QMainWindow):
         QTimer.singleShot(200,self.auto_generate)
         if self.cfg['google'].get('enabled'):QTimer.singleShot(500,self.sync_google)
 
-    def workflow_kind(self):return ('volunteer','donor','beneficiary','volunteer')[self.active_workflow]
+    def workflow_kind(self):return ('volunteer','beneficiary','volunteer')[self.active_workflow]
     def update_workflow_controls(self):
-        self.event_button.setVisible(self.active_workflow==3);self.form_button.setVisible(self.active_workflow==2)
-        self.category.hide()
+        self.event_button.setVisible(self.active_workflow==ACTIVITY_TAB);self.form_button.setVisible(self.active_workflow==FAMILY_TAB)
+        self.category.hide();self.certificate_columns.setVisible(self.active_workflow==0)
     def change_workflow(self,index):
         previous=self.active_workflow
         if not self.guard_edits():
@@ -262,6 +272,16 @@ class Window(QMainWindow):
                 headers,rows=self.store.table(sheet);mapping=self.mapping(sheet,headers)
                 if any(self.record(r,mapping)['type']==self.workflow_kind() for r in rows):selected=sheet;break
         self.load_table(selected or self.sheet);self.update_workflow_controls()
+    def refresh_column_boxes(self):
+        mapping=self.mapping()
+        for key,box in self.column_boxes.items():
+            box.blockSignals(True);box.clear();box.addItem('Select a column', '');
+            for header in self.headers:box.addItem(header,header)
+            box.setCurrentIndex(max(0,box.findData(mapping.get(key,''))));box.blockSignals(False)
+    def certificate_mapping_changed(self,*args):
+        mapping=self.mapping()
+        mapping.update({key:box.currentData() or '' for key,box in self.column_boxes.items()})
+        self.cfg['mapping'][self.mapping_key()]=mapping;self.persist();self.generation+=1;self.render();self.auto_generate()
     def blank_row(self):
         row={h:'' for h in self.headers};row.update(__fb_id='',_row=None)
         col=self.mapping().get('type')
@@ -313,12 +333,15 @@ class Window(QMainWindow):
         self.generation+=1
         self.sheet=sheet if sheet in self.store.sheets else self.store.sheets[0]
         self.headers,self.rows=self.store.table(self.sheet);self.deleted=[];self.dirty=False
+        if not self.sheet_is_synced():
+            for key,label in [('date','Date'),('cert_no','Certificate Number')]:
+                if not self.mapping().get(key) and label not in self.headers:self.headers.append(label)
         self.sheets.blockSignals(True);self.sheets.clear();self.sheets.addItems(self.store.sheets);self.sheets.setCurrentText(self.sheet);self.sheets.blockSignals(False)
-        self.cfg['sheet']=self.sheet;self.cfg['workbook']=str(self.store.path);self.persist();self.render()
+        self.cfg['sheet']=self.sheet;self.cfg['workbook']=str(self.store.path);self.persist();self.refresh_column_boxes();self.render()
     def render(self,*args):
         q=self.search.text().casefold();category=self.category.currentText()
         self.visible=[i for i,r in enumerate(self.rows) if self.record(r)['type'] in (self.workflow_kind(),'') and q in ' '.join(text(r.get(h)) for h in self.headers).casefold() and (category=='All types' or self.record(r)['type']==category)]
-        self.table.blockSignals(True);self.table.clearContents();self.table.setRowCount(len(self.visible));self.table.setColumnCount(len(self.headers)+2);self.table.setHorizontalHeaderLabels(self.headers+['Application Status' if self.active_workflow in (2,3) else 'Certificate Status','Share'])
+        self.table.blockSignals(True);self.table.clearContents();self.table.setRowCount(len(self.visible));self.table.setColumnCount(len(self.headers)+2);self.table.setHorizontalHeaderLabels(self.headers+['Application Status' if self.active_workflow in (FAMILY_TAB,ACTIVITY_TAB) else 'Certificate Status','Share'])
         for ui,i in enumerate(self.visible):
             row=self.rows[i]
             for c,h in enumerate(self.headers):
@@ -327,16 +350,19 @@ class Window(QMainWindow):
                 self.table.setItem(ui,c,item)
             rec=self.record(row);entry=self.cache.get(self.cache_key(rec['id']),{})
             status='No certificate required' if rec['type']=='beneficiary' else entry.get('status','Pending' if rec['type'] else 'Select a type / column mapping')
-            if self.active_workflow==2:status='Ready for confirmation PDF'
-            elif self.active_workflow==3:status='Ready to share activity details'
-            if self.dirty and rec['type'] in ('donor','volunteer'):status='Unsaved'
+            if self.active_workflow==FAMILY_TAB:status='Ready for confirmation PDF'
+            elif self.active_workflow==ACTIVITY_TAB:status='Ready to share activity details'
+            if self.dirty and rec['type'] in ('volunteer',):status='Unsaved'
             item=QTableWidgetItem(status);item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable);self.table.setItem(ui,len(self.headers),item)
-            button=QPushButton('Share');button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward));button.setToolTip('Review the activity message and open WhatsApp.' if self.active_workflow==3 else 'Open WhatsApp. Attach the confirmation PDF and send it manually.' if self.active_workflow==2 else 'Open WhatsApp. Attach the certificate PDF and send it manually.');button.clicked.connect(lambda checked=False,index=i:self.share(index));self.table.setCellWidget(ui,len(self.headers)+1,button)
+            button=QPushButton('Share');button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward));button.setToolTip('Review the activity message and open WhatsApp.' if self.active_workflow==ACTIVITY_TAB else 'Open WhatsApp. Attach the confirmation PDF and send it manually.' if self.active_workflow==FAMILY_TAB else 'Open WhatsApp. Attach the certificate PDF and send it manually.');button.clicked.connect(lambda checked=False,index=i:self.share(index));self.table.setCellWidget(ui,len(self.headers)+1,button)
         self.append_entry_slots()
         self.table.blockSignals(False)
         for c,h in enumerate(self.headers):
             if h==self.mapping().get('type'):self.table.setItemDelegateForColumn(c,TypeDelegate(self.table))
             else:self.table.setItemDelegateForColumn(c,None)
+        for key,width in [('date',140),('cert_no',180)]:
+            column=self.mapping().get(key)
+            if column in self.headers:self.table.setColumnWidth(self.headers.index(column),width)
         self.table.setColumnWidth(0,230);self.table.setColumnWidth(len(self.headers),230);self.table.setColumnWidth(len(self.headers)+1,140)
         self.summary.setText(f'{self.store.path}  ·  {self.sheet}  ·  {len(self.rows)} records / showing {len(self.visible)}'+('  ·  Unsaved changes' if self.dirty else ''))
     def sheet_is_synced(self):return any(r.get('__fb_source') for r in self.rows) or any(s.get('destination')==self.sheet for s in self.cfg['google'].get('sources',[]))
@@ -400,10 +426,10 @@ class Window(QMainWindow):
         if self.dirty:self.store.reload();self.load_table(self.sheet)
         dialog=QDialog(self);dialog.setWindowTitle('Add Person');dialog.resize(500,350)
         form=QFormLayout(dialog);fields={};mapping=self.mapping()
-        note=QLabel('Enter the person details below. Certificates are created for volunteers and donors.');note.setWordWrap(True);form.addRow(note)
+        note=QLabel('Enter the person details below. Certificates are created for volunteers.');note.setWordWrap(True);form.addRow(note)
         for header in self.headers:
             if header==mapping.get('type'):
-                editor=QComboBox();editor.addItems(['volunteer','donor','beneficiary'])
+                editor=QComboBox();editor.addItems(['volunteer','beneficiary'])
             else:
                 editor=QLineEdit()
                 if header==mapping.get('name'):editor.setPlaceholderText('Name to print on the certificate')
@@ -456,7 +482,7 @@ class Window(QMainWindow):
         if self.autosave.isChecked():self.save_timer.start()
     def configure_mapping(self):
         dialog=MappingDialog(self.headers,self.mapping(),self)
-        if dialog.exec():self.cfg['mapping'][self.mapping_key()]=dialog.value();self.persist();self.generation+=1;self.render();self.auto_generate()
+        if dialog.exec():self.cfg['mapping'][self.mapping_key()]=dialog.value();self.persist();self.generation+=1;self.refresh_column_boxes();self.render();self.auto_generate()
     def configure_templates(self):
         dialog=TemplateDialog(self.cfg,self)
         if dialog.exec():self.cfg.update(dialog.value());self.persist();self.generation+=1;self.auto_generate()
@@ -471,13 +497,13 @@ class Window(QMainWindow):
             for sheet in self.store.sheets:
                 headers,rows=self.store.table(sheet)
                 mapping=self.mapping(sheet,headers)
-                if not any(self.record(r,mapping)['type'] in ('donor','volunteer') and self.record(r,mapping)['name'].strip() for r in rows):continue
+                if not any(self.record(r,mapping)['type'] in ('volunteer',) and self.record(r,mapping)['name'].strip() for r in rows):continue
                 self.store.ensure_ids(sheet)
                 _,rows=self.store.table(sheet)
                 records.extend(self.record(r,mapping) for r in rows)
-            self.headers,self.rows=self.store.table(self.sheet)
+            _,self.rows=self.store.table(self.sheet)
         except Exception as e:self.say('Automatic generation paused: '+str(e));return
-        records=[r for r in records if r['type'] in ('donor','volunteer') and r['name'].strip()]
+        records=[r for r in records if r['type'] in ('volunteer',) and r['name'].strip()]
         if not records:self.render();return
         templates=copy.deepcopy(self.cfg['templates']);engine=self.cfg.get('engine','auto');soffice=self.cfg.get('soffice','')
         old=copy.deepcopy(self.cache);scope=self.scope();version=self.generation
@@ -516,12 +542,13 @@ class Window(QMainWindow):
     def sync_google(self):
         if self.busy_sync:return
         if self.dirty:self.say('Google sync is waiting for local edits to be saved.');return
-        cfg=copy.deepcopy(self.cfg['google'])
+        original_cfg=copy.deepcopy(self.cfg['google']);cfg=copy.deepcopy(original_cfg)
+        cfg['sources']=[s for s in cfg.get('sources',[]) if s.get('type')!='donor']
         if not cfg.get('sources'):self.say('Add registration sources in Google Settings first.');return
         self.busy_sync=True;target=self.store.path
         def complete(batches):
             self.busy_sync=False
-            if self.dirty or self.store.path!=target or self.cfg['google']!=cfg:
+            if self.dirty or self.store.path!=target or self.cfg['google']!=original_cfg:
                 self.say('Google data was read. Sync was deferred because edits or connection settings changed; retry when ready.');return
             try:
                 added,updated=self.store.merge_google(batches);current=self.sheet;self.load_table(current)
@@ -547,11 +574,11 @@ class Window(QMainWindow):
             if not self.save():return
             index=new_index
         if index>=len(self.rows):return
-        if self.active_workflow in (2,3):
+        if self.active_workflow in (FAMILY_TAB,ACTIVITY_TAB):
             self.share_application(index);return
         rec=self.record(self.rows[index]);entry=self.cache.get(self.cache_key(rec['id']),{})
         current=False
-        if rec['type'] in ('donor','volunteer'):
+        if rec['type'] in ('volunteer',):
             cfg=self.cfg['templates'].get(rec['type'],{})
             try:current=entry.get('signature')==certificate_signature(rec,cfg['path'],cfg.get('marker','auto'),self.cfg.get('engine','auto')) and Path(entry.get('pdf','')).is_file()
             except (KeyError,OSError):pass
@@ -568,7 +595,7 @@ class Window(QMainWindow):
     def share_application(self,index):
         row=self.rows[index];rec=self.record(row);phone=rec['phone'];pdf=None
         try:
-            if self.active_workflow==2:
+            if self.active_workflow==FAMILY_TAB:
                 self.store.ensure_ids(self.sheet);self.headers,self.rows=self.store.table(self.sheet);row=self.rows[index];rec=self.record(row)
                 pdf=family_pdf(row,self.headers,rec['name'],self.scope()+':'+rec['id'],DATA/'family_confirmations')
                 message=f"Hello {rec['name'] or 'there'}, please review your family application details in the attached PDF. Reply to confirm they are correct or tell us what needs changing."

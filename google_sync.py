@@ -6,6 +6,8 @@ from storage import text
 
 
 def spreadsheet_id(value):
+    if '/forms/' in value:
+        raise ValueError('This is a Google Form link. Open the form Responses tab, click the Google Sheets icon, and copy that response spreadsheet URL.')
     hit=re.search(r'/spreadsheets/d/([A-Za-z0-9_-]+)',value)
     result=hit.group(1) if hit else value.strip()
     if not re.fullmatch(r'[A-Za-z0-9_-]+',result): raise ValueError('Enter a Google Sheets URL or spreadsheet ID.')
@@ -26,6 +28,7 @@ def fetch(config, service=None):
         service=build('sheets','v4',http=AuthorizedHttp(cred,http=httplib2.Http(timeout=30,ca_certs=os.environ.get('SSL_CERT_FILE') or os.environ.get('REQUESTS_CA_BUNDLE'))),cache_discovery=False)
     batches=[]; destinations=set()
     for source in sources:
+        if source.get('type')=='donor':continue  # Retired workflow; preserve existing local history.
         sid=spreadsheet_id(source['spreadsheet'])
         title=source['destination'].strip()
         if not title or len(title)>31 or re.search(r'[\\/*?:\[\]]',title):raise ValueError('Destination worksheet names must be 1–31 characters without \\ / * ? : [ ].')

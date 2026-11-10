@@ -53,7 +53,7 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.store.table('Records')[1][0]['Extra'],'new');self.assertEqual(self.store.table('Records')[1][0]['__fb_id'],uid)
     def test_duplicate_copied_ids_repaired(self):
         h,_=self.store.table('Records');self.store.save_rows('Records',h,[{'Participant Name':'A'},{'Participant Name':'B'}])
-        w=load_workbook(self.path);ws=w['Records'];ws.cell(3,6,ws.cell(2,6).value);w.save(self.path);w.close();self.store.reload()
+        w=load_workbook(self.path);ws=w['Records'];ws.cell(3,7,ws.cell(2,7).value);w.save(self.path);w.close();self.store.reload()
         self.store.ensure_ids('Records');ids=[r['__fb_id'] for r in self.store.table('Records')[1]]
         self.assertEqual(len(set(ids)),2)
     def batch(self):
@@ -94,7 +94,7 @@ class CertificateTests(unittest.TestCase):
         out=self.root/'out.pptx';cert.fill_template(self.path,out,{'NAME':'Alice'})
         self.assertEqual(Presentation(out).slides[0].shapes[0].table.cell(0,0).text,'Alice')
     def test_cache_and_regeneration(self):
-        rec={'id':'abc','name':'Alice','type':'donor','date':'2026'};cfg={'donor':{'path':str(self.path)}}
+        rec={'id':'abc','name':'Alice','type':'volunteer','date':'2026'};cfg={'volunteer':{'path':str(self.path)}}
         def convert(pptx,out,*args):Path(out).write_bytes(b'%PDF-1.4\nmock')
         with patch('certificates.convert_pdf',side_effect=convert) as mock:
             first=cert.generate_one(rec,cfg,self.root/'output');second=cert.generate_one(rec,cfg,self.root/'output',first)
@@ -102,18 +102,40 @@ class CertificateTests(unittest.TestCase):
             rec['name']='Bob';third=cert.generate_one(rec,cfg,self.root/'output',first);self.assertEqual(mock.call_count,2);self.assertNotEqual(first['signature'],third['signature'])
     def test_beneficiary_and_missing_template(self):
         self.assertEqual(cert.generate_one({'type':'beneficiary'},{},self.root)['status'],'Not applicable')
-        self.assertIn('template required',cert.generate_one({'type':'donor','name':'A'},{},self.root)['status'])
+        self.assertIn('template required',cert.generate_one({'type':'volunteer','name':'A'},{},self.root)['status'])
+    def test_new_markers_split_runs_literal_values_and_format(self):
+        p=Presentation();slide=p.slides.add_slide(p.slide_layouts[6]);box=slide.shapes.add_textbox(0,0, Inches(9), Inches(2));para=box.text_frame.paragraphs[0]
+        for value in ['Name',' / Date ','No',' / Cert',' No']:
+            run=para.add_run();run.text=value;run.font.bold=True
+        p.save(self.path);out=self.root/'out.pptx'
+        cert.fill_template(self.path,out,{'NAME':'Alice Cert No','DATE':'Date No 2026','CERT_NO':'0007'})
+        result=Presentation(out).slides[0].shapes[0].text_frame.paragraphs[0]
+        self.assertEqual(result.text,'Alice Cert No / Date No 2026 / 0007');self.assertTrue(result.runs[0].font.bold)
+        self.assertIn('Date No',cert.markers(self.path));self.assertIn('Cert No',cert.markers(self.path))
+
+    def test_number_changes_invalidate_cache_and_missing_fields_block_export(self):
+        p=Presentation();slide=p.slides.add_slide(p.slide_layouts[6]);slide.shapes.add_textbox(0,0, Inches(9), Inches(2)).text='Name / Date No / Cert No';p.save(self.path)
+        rec={'id':'abc','name':'Alice','type':'volunteer','date':'2026-12-01','cert_no':'0001'};cfg={'volunteer':{'path':str(self.path)}}
+        def convert(pptx,out,*args):Path(out).write_bytes(b'%PDF-1.4 mock')
+        with patch('certificates.convert_pdf',side_effect=convert) as converter:
+            first=cert.generate_one(rec,cfg,self.root);rec['cert_no']='0002';second=cert.generate_one(rec,cfg,self.root,first)
+            self.assertNotEqual(first['signature'],second['signature']);self.assertEqual(converter.call_count,2)
+            rec['cert_no']='';self.assertIn('Certificate number required',cert.generate_one(rec,cfg,self.root)['status'])
+            rec['date']='';self.assertIn('Attendance date required',cert.generate_one(rec,cfg,self.root)['status']);self.assertEqual(converter.call_count,2)
+        self.assertEqual(cert.generate_one({'type':'donor','name':'Legacy'},{},self.root)['status'],'Not applicable')
+
     def test_whatsapp_and_aliases(self):
         self.assertTrue(cert.whatsapp_url('012-3456789','A').startswith('https://wa.me/60123456789?'))
         self.assertEqual(cert.kind('捐赠者'),'donor');self.assertEqual(cert.kind('志愿者'),'volunteer')
     @unittest.skipUnless(os.environ.get('FOODBANK_TEST_SOFFICE'),'Set FOODBANK_TEST_SOFFICE for real PDF integration')
     def test_real_pdf(self):
-        rec={'id':'abc','name':'Alice Example','type':'volunteer','date':'2026-11-02'}
+        p=Presentation();slide=p.slides.add_slide(p.slide_layouts[6]);slide.shapes.add_textbox(0,0, Inches(9), Inches(2)).text='Name / Date No / Cert No';p.save(self.path)
+        rec={'id':'abc','name':'Alice Example','type':'volunteer','date':'2026-11-02','cert_no':'FB-0001'}
         result=cert.generate_one(rec,{'volunteer':{'path':str(self.path)}},self.root/'pdf',engine='libreoffice',soffice=os.environ['FOODBANK_TEST_SOFFICE'])
         self.assertTrue(Path(result['pdf']).read_bytes().startswith(b'%PDF-'))
         import subprocess
         extracted=subprocess.check_output(['pdftotext',result['pdf'],'-'],text=True)
-        self.assertIn('Alice Example',extracted);self.assertNotIn('Name',extracted)
+        self.assertIn('Alice Example',extracted);self.assertIn('2026-11-02',extracted);self.assertIn('FB-0001',extracted);self.assertNotIn('Cert No',extracted);self.assertNotIn('Date No',extracted)
 
 
 class FakeService:
@@ -140,6 +162,8 @@ class GoogleTests(unittest.TestCase):
         cfg=self.cfg();cfg['sources'][0]['destination']='bad/name'
         with self.assertRaises(ValueError):fetch(cfg,FakeService([]))
         with self.assertRaises(ValueError):fetch(self.cfg(),FakeService([['Full Name','Phone','Phone']]))
+    def test_form_url_has_actionable_error(self):
+        with self.assertRaisesRegex(ValueError,'Responses tab'):spreadsheet_id('https://docs.google.com/forms/d/example/edit')
     def test_sheet_url(self):self.assertEqual(spreadsheet_id('https://docs.google.com/spreadsheets/d/abc_123/edit'),'abc_123')
 
 

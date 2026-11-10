@@ -45,7 +45,7 @@ def all_paragraphs(prs):
 def markers(path):
     result = set()
     for p in all_paragraphs(Presentation(str(path))):
-        result.update(re.findall(r'\{\{[^{}]+\}\}|(?<!\w)name(?!\w)',p.text,re.I))
+        result.update(re.findall(r'\{\{[^{}]+\}\}|(?<!\w)(?:name|date\s+no|cert\s+no)(?!\w)',p.text,re.I))
     return sorted(result)
 
 
@@ -63,25 +63,31 @@ def replace_paragraph(paragraph, pattern, replacement):
         last=next(i for i,(a,b) in enumerate(offsets) if a<end<=b)
         a=start-offsets[first][0];b=end-offsets[last][0]
         if first==last:
-            runs[first].text=runs[first].text[:a]+replacement+runs[first].text[b:]
+            runs[first].text=runs[first].text[:a]+(replacement(hit) if callable(replacement) else replacement)+runs[first].text[b:]
         else:
-            runs[first].text=runs[first].text[:a]+replacement
+            runs[first].text=runs[first].text[:a]+(replacement(hit) if callable(replacement) else replacement)
             for i in range(first+1,last):runs[i].text=''
             runs[last].text=runs[last].text[b:]
     return len(hits)
 
 
+def field_patterns(name_marker='auto'):
+    return {
+        'NAME':r'\{\{\s*name\s*\}\}|(?<!\w)name(?!\w)' if name_marker=='auto' else re.escape(name_marker),
+        'DATE':r'\{\{\s*DATE\s*\}\}|(?<!\w)Date\s+No(?!\w)',
+        'CERT_NO':r'\{\{\s*CERT_NO\s*\}\}|(?<!\w)Cert\s+No(?!\w)',
+        'TYPE':r'\{\{\s*TYPE\s*\}\}',
+        'ID':r'\{\{\s*ID\s*\}\}',
+    }
+
+
 def fill_template(template, output, values, name_marker='auto'):
-    prs=Presentation(str(template)); count=0
-    if name_marker == 'auto':
-        name_pattern=re.compile(r'\{\{\s*name\s*\}\}|(?<!\w)name(?!\w)',re.I)
-    else:
-        name_pattern=re.compile(re.escape(name_marker))
-    # Replace non-name markers first so recipient text containing markers stays literal.
+    prs=Presentation(str(template));count=0
+    # One pass over original text: values that contain marker-like text stay literal.
+    pattern=re.compile('|'.join('(?P<'+key+'>'+value+')' for key,value in field_patterns(name_marker).items()),re.I)
     for p in all_paragraphs(prs):
-        for key in ('DATE','TYPE','ID'):
-            replace_paragraph(p,re.compile(r'\{\{\s*'+key+r'\s*\}\}',re.I),str(values.get(key,'')))
-        count+=replace_paragraph(p,name_pattern,str(values['NAME']))
+        count+=sum(hit.lastgroup=='NAME' for hit in pattern.finditer(''.join(r.text for r in p.runs)))
+        replace_paragraph(p,pattern,lambda hit:str(values.get(hit.lastgroup,'')))
     if not count:
         raise ValueError('No matching name marker found. Select the exact text in Template Settings (name must be editable text, not an image).')
     prs.save(str(output))
@@ -121,18 +127,22 @@ def convert_pdf(pptx, output, engine='auto', soffice=''):
 
 
 def certificate_signature(record, template, marker, engine):
-    fields={k:str(record.get(k,'')) for k in ('id','name','type','date')}
-    fields.update(template=hashlib.sha256(Path(template).read_bytes()).hexdigest(),marker=marker,engine=engine)
+    fields={k:str(record.get(k,'')) for k in ('id','name','type','date','cert_no')}
+    fields.update(replacement_version=2,template=hashlib.sha256(Path(template).read_bytes()).hexdigest(),marker=marker,engine=engine)
     return hashlib.sha256(json.dumps(fields,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
 def generate_one(record, templates, output_dir, previous=None, engine='auto', soffice=''):
     k=kind(record.get('type'))
-    if k not in ('donor','volunteer'): return {'status':'Not applicable'}
+    if k!='volunteer': return {'status':'Not applicable'}
     if not str(record.get('name','')).strip(): return {'status':'Name required'}
     cfg=templates.get(k,{})
     template=Path(cfg.get('path',''))
     if not template.is_file(): return {'status':f'{k.title()} template required'}
+    template_text='\n'.join(p.text for p in all_paragraphs(Presentation(str(template))))
+    for field,label,key in [('DATE','Attendance date','date'),('CERT_NO','Certificate number','cert_no')]:
+        if re.search(field_patterns()[field],template_text,re.I) and not str(record.get(key,'')).strip():
+            return {'status':label+' required: select its column and fill in the value'}
     marker=cfg.get('marker','auto') or 'auto'
     sig=certificate_signature(record,template,marker,engine)
     previous=previous or {}
@@ -143,7 +153,7 @@ def generate_one(record, templates, output_dir, previous=None, engine='auto', so
     dest=folder/f'{label}_{token}.pdf'
     with tempfile.TemporaryDirectory() as temp:
         pptx=Path(temp)/'certificate.pptx';pdf=Path(temp)/'certificate.pdf'
-        fill_template(template,pptx,{'NAME':str(record['name']),'TYPE':k.title(),'DATE':str(record.get('date','')),'ID':str(record['id'])},marker)
+        fill_template(template,pptx,{'NAME':str(record['name']),'TYPE':k.title(),'DATE':str(record.get('date','')),'ID':str(record['id']),'CERT_NO':str(record.get('cert_no',''))},marker)
         convert_pdf(pptx,pdf,engine,soffice)
         fd,staging=tempfile.mkstemp(prefix='.certificate-',suffix='.pdf',dir=folder);os.close(fd)
         try:
