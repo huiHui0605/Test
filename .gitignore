@@ -9,3 +9,11 @@ config.json
 google-service-account*.json
 service-account*.json
 *.zip
+
+# OAuth configuration and user artifacts must never be committed
+client_secret*.json
+oauth_client*.json
+credentials*.json
+token*.json
+*.sqlite3
+*.sqlite3-*

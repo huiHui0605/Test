@@ -162,6 +162,9 @@ class ExcelStore:
             changed=False
             for batch in batches:
                 title = batch['sheet']
+                matching_title = next((name for name in wb.sheetnames if name.casefold() == title.casefold()), None)
+                if matching_title is not None and matching_title != title:
+                    raise ValueError('A worksheet with this name already exists using different capitalization. Use its exact name or choose a new destination.')
                 if title in wb.sheetnames:
                     ws = wb[title]
                     # Never take over a manually created worksheet.

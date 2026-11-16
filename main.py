@@ -15,8 +15,11 @@ from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBo
     QAbstractItemView,QInputDialog,QStyledItemDelegate,QMenu,QStyle,QTabBar,QPlainTextEdit)
 from storage import ExcelStore, ConflictError, text
 from certificates import kind, markers, generate_one, certificate_signature, whatsapp_url
-from google_sync import fetch
-from applications import FAMILY_FORM_URL,DEFAULT_MESSAGE,event_message,message_url,family_pdf
+from google_sync import fetch_account as fetch
+from google_account import GoogleAccount
+from google_dialog import GoogleDialog
+from email_delivery import DeliveryJournal, build_message, recipient_address, send_reviewed
+from applications import FAMILY_FORM_URL,DEFAULT_MESSAGE,event_message,message_url,family_pdf,activity_message
 
 FAMILY_TAB=1
 ACTIVITY_TAB=2
@@ -25,6 +28,8 @@ DATA=Path(os.environ.get('FOODBANK_DATA_DIR',str(ROOT/'data'))).expanduser().res
 SETTINGS=DATA/'settings.json'
 ALIASES={'name':['participantname','name','fullname','姓名','名字','namapenuh','nama'],
          'type':['type','role','category','类型','類型'],
+         'email':['email','emailaddress','邮箱','电子邮箱'],
+         'activity_date':[],
          'phone':['phone','phonenumber','contactnumber','whatsapp','电话','telefon'],
          'date':['attendancedate','dateno','date','日期','出席日期','tarikh'],
          'cert_no':['certificatenumber','certificateno','certno','感谢状编号']}
@@ -88,7 +93,7 @@ class MappingDialog(QDialog):
     def __init__(self, headers, current, parent=None):
         super().__init__(parent);self.setWindowTitle('Worksheet Column Mapping');self.resize(490,280)
         layout=QFormLayout(self);self.fields={}
-        for key,label in [('name','Participant name'),('type','Type'),('phone','WhatsApp phone'),('date','Attendance date'),('cert_no','Certificate number')]:
+        for key,label in [('name','Participant name'),('type','Type'),('phone','WhatsApp phone'),('email','Applicant email'),('activity_date','Activity participation date (not Timestamp)'),('date','Certificate attendance date'),('cert_no','Certificate number')]:
             box=QComboBox();box.addItems(['(Not configured)']+headers)
             guess=next((h for h in headers if norm(h) in ALIASES[key]),'')
             chosen=current.get(key,guess)
@@ -140,51 +145,6 @@ class TemplateDialog(QDialog):
         return {'templates':{k:{'path':box.text().strip(),'marker':self.tokens[k].text().strip() or 'Name'} for k,box in self.paths.items()},'engine':self.engine.currentText(),'soffice':self.soffice.text().strip()}
 
 
-class GoogleDialog(QDialog):
-    columns=[('type','Type'),('spreadsheet','Google Sheet URL / ID'),('range','Range (including headers)'),('destination','Local worksheet'),('name','Name column'),('phone','Phone column'),('email','Email column'),('date','Date column'),('key','Unique ID column (recommended)')]
-    def __init__(self,cfg,parent=None):
-        super().__init__(parent);self.setWindowTitle('Google Sheets Settings');self.resize(1150,480)
-        layout=QVBoxLayout(self)
-        label=QLabel('Use the response Google Sheet URL, not the Google Form URL. For Tally, connect Tally to Google Sheets first.\n1. Enable the Sheets API in Google Cloud, create a service account, and download its JSON key.\n2. Share the Google Sheet with the client_email in that JSON file as a Viewer.\n3. Add one row per source and enter exact column headings. Sync is read-only; local edits are not sent to Google.\nWithout a unique ID, records use row numbers: only append responses; do not sort, insert, or delete existing rows.');label.setWordWrap(True);layout.addWidget(label)
-        row=QHBoxLayout();self.credentials=QLineEdit(cfg.get('credentials',''));button=QPushButton('Choose Credentials JSON');button.clicked.connect(self.choose)
-        row.addWidget(self.credentials);row.addWidget(button);layout.addLayout(row)
-        self.table=QTableWidget(0,len(self.columns));self.table.setHorizontalHeaderLabels([label for _,label in self.columns]);self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents);layout.addWidget(self.table)
-        for source in cfg.get('sources',[]):
-            if source.get('type')!='donor':self.add(source)
-        buttons=QHBoxLayout();add=QPushButton('Add Source');add.clicked.connect(lambda:self.add({}));delete=QPushButton('Remove Selected Sources');delete.clicked.connect(self.remove)
-        buttons.addWidget(add);buttons.addWidget(delete);self.enabled=QCheckBox('Auto sync');self.enabled.setChecked(cfg.get('enabled',False));buttons.addWidget(self.enabled)
-        self.interval=QSpinBox();self.interval.setRange(15,3600);self.interval.setValue(cfg.get('interval',60));self.interval.setSuffix(' seconds');buttons.addWidget(self.interval);layout.addLayout(buttons)
-        done=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);done.accepted.connect(self.validate);done.rejected.connect(self.reject);layout.addWidget(done)
-    def choose(self):
-        path,_=QFileDialog.getOpenFileName(self,'Choose Service Account JSON','','JSON (*.json)',options=QFileDialog.Option.DontUseNativeDialog)
-        if path:self.credentials.setText(path)
-    def add(self,source):
-        r=self.table.rowCount();self.table.insertRow(r)
-        for c,(key,_) in enumerate(self.columns):
-            if key=='type':
-                box=QComboBox();box.addItems(['volunteer','beneficiary']);box.setCurrentText(source.get(key,'volunteer'));self.table.setCellWidget(r,c,box)
-            else:self.table.setItem(r,c,QTableWidgetItem(source.get(key,'Form Responses 1!A1:ZZ' if key=='range' else '')))
-    def remove(self):
-        for r in sorted({i.row() for i in self.table.selectedIndexes()},reverse=True):self.table.removeRow(r)
-    def value(self):
-        sources=[]
-        for r in range(self.table.rowCount()):
-            sources.append({key:(self.table.cellWidget(r,c).currentText() if key=='type' else self.table.item(r,c).text().strip()) for c,(key,_) in enumerate(self.columns)})
-        return {'credentials':self.credentials.text().strip(),'sources':sources,'enabled':self.enabled.isChecked(),'interval':self.interval.value()}
-    def validate(self):
-        from google_sync import spreadsheet_id
-        try:
-            cfg=self.value();dest=set()
-            for s in cfg['sources']:
-                spreadsheet_id(s['spreadsheet'])
-                if not s['name'] or not s['range'] or not s['destination']:raise ValueError('Each source requires a range, a local worksheet, and a name column.')
-                if s['destination'] in dest:raise ValueError('Each source must use a different local worksheet.')
-                dest.add(s['destination'])
-            if cfg['sources'] and not Path(cfg['credentials']).is_file():raise ValueError('Please select a service account JSON file.')
-            self.accept()
-        except Exception as e:QMessageBox.warning(self,'Incomplete Settings',str(e))
-
-
 class Window(QMainWindow):
     def __init__(self):
         super().__init__();DATA.mkdir(parents=True,exist_ok=True)
@@ -196,7 +156,13 @@ class Window(QMainWindow):
             if template.exists():self.cfg['templates'].setdefault(k,{'path':str(template),'marker':'Name'})
         volunteer=self.cfg['templates'].get('volunteer')
         if volunteer is not None and volunteer.get('marker','auto') in ('','auto'):volunteer['marker']='Name'
+        self.google_account=GoogleAccount(hashlib.sha256(str(DATA).encode()).hexdigest(),self.cfg.get('oauth_client',''))
+        self.busy_google=False;self.email_busy=set();self.source_dialog_open=False;self.google_identity=''
+        self.email_journal=DeliveryJournal(DATA/'email_delivery.sqlite3')
         self.active_workflow=0;self.tab_sheets={}
+        for source in self.cfg['google'].get('sources',[]):
+            if source.get('type') in ('volunteer','beneficiary'):
+                self.tab_sheets[FAMILY_TAB if source['type']=='beneficiary' else ACTIVITY_TAB]=source['destination']
         self.store=ExcelStore(self.cfg['workbook']);self.sheet='';self.rows=[];self.headers=[];self.visible=[];self.deleted=[]
         self.dirty=False;self.busy_pdf=False;self.busy_sync=False;self.pending_pdf=False;self.jobs=set();self.generation=0
         self.cache_path=DATA/'certificate_index.json';self.cache=read_json(self.cache_path,{})
@@ -208,13 +174,13 @@ class Window(QMainWindow):
         settings_button=QPushButton('Settings');settings_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
         settings_button.setToolTip('Set up certificates, Google Sheets, and worksheet columns.')
         self.settings_menu=QMenu(settings_button)
-        for label,fn in [('Certificate Templates',self.configure_templates),('Google Sheets Connection',self.configure_google),('Worksheet Columns',self.configure_mapping),('WhatsApp Country Code',self.configure_country)]:
+        for label,fn in [('Certificate Templates',self.configure_templates),('Google Sheets Connection',self.configure_google),('Developer Google Setup',self.configure_oauth_client),('Worksheet Columns',self.configure_mapping),('WhatsApp Country Code',self.configure_country)]:
             self.settings_menu.addAction(label,fn)
         settings_button.setMenu(self.settings_menu);heading.addWidget(settings_button)
         self.workflow_tabs=QTabBar();self.workflow_tabs.setExpanding(True)
         for label in ['Volunteer Certificates','Family Applications','Volunteer Activities']:self.workflow_tabs.addTab(label)
         layout.addWidget(self.workflow_tabs);self.workflow_tabs.currentChanged.connect(self.change_workflow)
-        guide=QLabel('Type in an empty row to add a person. Use Share to review and send on WhatsApp.')
+        guide=QLabel('Type in an empty row to add a person. Review family PDFs before email; share volunteer messages through WhatsApp.')
         guide.setObjectName('guide');guide.setWordWrap(True);layout.addWidget(guide)
         self.summary=QLabel();self.summary.setWordWrap(True);layout.addWidget(self.summary)
         toolbar=QHBoxLayout();layout.addLayout(toolbar)
@@ -222,6 +188,9 @@ class Window(QMainWindow):
             ('Open Excel',self.open_excel,QStyle.StandardPixmap.SP_DialogOpenButton,'Choose the Excel workbook you want to manage.'),
             ('Sync Google',self.sync_google,QStyle.StandardPixmap.SP_BrowserReload,'Check connected Google Sheets for new registrations.')]:
             button=QPushButton(label);button.setIcon(self.style().standardIcon(icon));button.setToolTip(tip);button.clicked.connect(fn);toolbar.addWidget(button)
+        self.connect_button=QPushButton('Connect Google');self.connect_button.clicked.connect(self.connect_google);toolbar.addWidget(self.connect_button)
+        self.disconnect_button=QPushButton('Disconnect');self.disconnect_button.clicked.connect(self.disconnect_google);toolbar.addWidget(self.disconnect_button)
+        self.google_status=QLabel('Google: not checked');toolbar.addWidget(self.google_status)
         toolbar.addStretch()
         more=QPushButton('More Actions');more.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogListView))
         self.actions_menu=QMenu(more)
@@ -255,7 +224,7 @@ class Window(QMainWindow):
         self.load_table(self.cfg.get('sheet'));self.update_workflow_controls()
         self.setup_google_timer()
         QTimer.singleShot(200,self.auto_generate)
-        if self.cfg['google'].get('enabled'):QTimer.singleShot(500,self.sync_google)
+        QTimer.singleShot(500,self.check_google_connection)
 
     def workflow_kind(self):return ('volunteer','beneficiary','volunteer')[self.active_workflow]
     def update_workflow_controls(self):
@@ -297,14 +266,17 @@ class Window(QMainWindow):
                 item=QTableWidgetItem('');item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable);self.table.setItem(r,c,item)
     def configure_event(self):
         cfg=self.cfg.get('event_message',{});dialog=QDialog(self);dialog.setWindowTitle('Activity Details and Message');dialog.resize(650,550);form=QFormLayout(dialog);fields={}
-        for key in ('event','date','time','location','details'):
+        for key in ('event','time','location','details'):
             field=QLineEdit(cfg.get(key,''));fields[key]=field;form.addRow(key.title(),field)
         editor=QPlainTextEdit(cfg.get('template',DEFAULT_MESSAGE));form.addRow('Message template',editor)
+        form.addRow(QLabel('The {date} value comes from each volunteer’s mapped participation date.'))
         form.addRow(QLabel('Placeholders: {name}, {event}, {date}, {time}, {location}, {details}, {phone}'))
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel);buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);form.addRow(buttons)
         if dialog.exec():
             values={k:f.text() for k,f in fields.items()};values['template']=editor.toPlainText()
-            try:event_message(values['template'],values)
+            try:
+                event_message(values['template'],values)
+                if '{date}' not in values['template']:raise ValueError('Include {date} for each volunteer’s participation date.')
             except ValueError as e:self.fail(str(e));return
             self.cfg['event_message']=values;self.persist()
     def review_message(self,message,pdf=None):
@@ -343,7 +315,7 @@ class Window(QMainWindow):
     def render(self,*args):
         q=self.search.text().casefold();category=self.category.currentText()
         self.visible=[i for i,r in enumerate(self.rows) if self.record(r)['type'] in (self.workflow_kind(),'') and q in ' '.join(text(r.get(h)) for h in self.headers).casefold() and (category=='All types' or self.record(r)['type']==category)]
-        self.table.blockSignals(True);self.table.clearContents();self.table.setRowCount(len(self.visible));self.table.setColumnCount(len(self.headers)+2);self.table.setHorizontalHeaderLabels(self.headers+['Application Status' if self.active_workflow in (FAMILY_TAB,ACTIVITY_TAB) else 'Certificate Status','Share'])
+        self.table.blockSignals(True);self.table.clearContents();self.table.setRowCount(len(self.visible));self.table.setColumnCount(len(self.headers)+2);self.table.setHorizontalHeaderLabels(self.headers+['Application Status' if self.active_workflow in (FAMILY_TAB,ACTIVITY_TAB) else 'Certificate Status','Email' if self.active_workflow==FAMILY_TAB else 'WhatsApp'])
         for ui,i in enumerate(self.visible):
             row=self.rows[i]
             for c,h in enumerate(self.headers):
@@ -352,11 +324,15 @@ class Window(QMainWindow):
                 self.table.setItem(ui,c,item)
             rec=self.record(row);entry=self.cache.get(self.cache_key(rec['id']),{})
             status='No certificate required' if rec['type']=='beneficiary' else entry.get('status','Pending' if rec['type'] else 'Select a type / column mapping')
-            if self.active_workflow==FAMILY_TAB:status='Ready for confirmation PDF'
+            if self.active_workflow==FAMILY_TAB:status='Sending email...' if self.cache_key(rec['id']) in self.email_busy else self.email_journal.label(self.cache_key(rec['id']))
             elif self.active_workflow==ACTIVITY_TAB:status='Ready to share activity details'
             if self.dirty and rec['type'] in ('volunteer',):status='Unsaved'
             item=QTableWidgetItem(status);item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable);self.table.setItem(ui,len(self.headers),item)
-            button=QPushButton('Share');button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward));button.setToolTip('Review the activity message and open WhatsApp.' if self.active_workflow==ACTIVITY_TAB else 'Open WhatsApp. Attach the confirmation PDF and send it manually.' if self.active_workflow==FAMILY_TAB else 'Open WhatsApp. Attach the certificate PDF and send it manually.');button.clicked.connect(lambda checked=False,index=i:self.share(index));self.table.setCellWidget(ui,len(self.headers)+1,button)
+            button=QPushButton('Review & Email' if self.active_workflow==FAMILY_TAB else 'WhatsApp Share')
+            button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
+            button.setToolTip('Review the recipient, message and PDF before sending email.' if self.active_workflow==FAMILY_TAB else 'Review and send manually in WhatsApp.')
+            button.setEnabled(self.cache_key(rec['id']) not in self.email_busy)
+            button.clicked.connect(lambda checked=False,index=i:self.share(index));self.table.setCellWidget(ui,len(self.headers)+1,button)
         self.append_entry_slots()
         self.table.blockSignals(False)
         for c,h in enumerate(self.headers):
@@ -365,7 +341,7 @@ class Window(QMainWindow):
         for key,width in [('date',140),('cert_no',180)]:
             column=self.mapping().get(key)
             if column in self.headers:self.table.setColumnWidth(self.headers.index(column),width)
-        self.table.setColumnWidth(0,230);self.table.setColumnWidth(len(self.headers),230);self.table.setColumnWidth(len(self.headers)+1,140)
+        self.table.setColumnWidth(0,230);self.table.setColumnWidth(len(self.headers),230);self.table.setColumnWidth(len(self.headers)+1,165)
         self.summary.setText(f'{self.store.path}  ·  {self.sheet}  ·  {len(self.rows)} records / showing {len(self.visible)}'+('  ·  Unsaved changes' if self.dirty else ''))
     def sheet_is_synced(self):return any(r.get('__fb_source') for r in self.rows) or any(s.get('destination')==self.sheet for s in self.cfg['google'].get('sources',[]))
     def edited(self,item):
@@ -535,14 +511,69 @@ class Window(QMainWindow):
             try:failed(message)
             finally:self.jobs.discard(job)
         job.signals.done.connect(success);job.signals.failed.connect(error);self.pool.start(job)
+    def configure_oauth_client(self):
+        if self.busy_google or self.busy_sync or self.email_busy:
+            self.say('Wait for Google tasks to finish before changing the client.');return
+        path,_=QFileDialog.getOpenFileName(self,'Developer: Choose OAuth Desktop App Client','','JSON (*.json)',options=QFileDialog.Option.DontUseNativeDialog)
+        if not path:return
+        from google_account import client_configuration
+        try:client_configuration(path)
+        except Exception as error:self.fail(str(error));return
+        self.cfg['oauth_client']=path;self.google_account.client_path=path;self.persist()
+        self.say('Desktop OAuth client configured. Staff can now use Connect Google. Reconnect if the client changed.')
+
+    def google_task(self,fn,complete):
+        if self.busy_google or self.busy_sync or self.email_busy:
+            self.say('Wait for the current Google or email task to finish.');return
+        self.busy_google=True;self.connect_button.setEnabled(False);self.disconnect_button.setEnabled(False)
+        def finish():
+            self.busy_google=False;self.connect_button.setEnabled(True);self.disconnect_button.setEnabled(True)
+        def done(result):
+            finish();complete(result)
+        def failed(message):
+            finish();self.google_status.setText('Google: action needed');self.say(message)
+        self.submit(fn,done,failed)
+
+    def check_google_connection(self):
+        if self.source_dialog_open:return
+        def complete(identity):
+            self.google_identity=identity;self.google_status.setText('Google: connected as '+identity)
+            if self.cfg['google'].get('enabled'):self.sync_google()
+        self.google_task(self.google_account.identity,complete)
+
+    def connect_google(self):
+        self.google_status.setText('Google: signing in...')
+        self.say('Complete sign-in in your browser. This request expires after three minutes if cancelled or left unfinished.')
+        def complete(identity):
+            self.google_identity=identity;self.google_status.setText('Google: connected as '+identity)
+            self.say('Google connected. Choose the volunteer and family response Sheets in Google Sheets Connection.')
+            self.configure_google()
+        self.google_task(self.google_account.connect,complete)
+
+    def disconnect_google(self):
+        def complete(_):
+            self.cfg['google']['enabled']=False;self.persist();self.setup_google_timer()
+            self.google_identity='';self.google_status.setText('Google: disconnected')
+            self.say('Google authorization removed from this computer. Local Excel history is retained. You can also revoke access in your Google Account security settings.')
+        self.google_task(self.google_account.disconnect,complete)
+
     def configure_google(self):
+        if self.busy_google or self.busy_sync or self.email_busy:
+            self.say('Wait for Google tasks to finish before changing sources.');return
         dialog=GoogleDialog(self.cfg['google'],self)
-        if dialog.exec():self.cfg['google']=dialog.value();self.persist();self.setup_google_timer();self.sync_google()
+        self.google_timer.stop();self.source_dialog_open=True
+        accepted=dialog.exec();self.source_dialog_open=False
+        if accepted:
+            self.cfg['google']=dialog.value();self.persist()
+            for source in self.cfg['google']['sources']:
+                self.tab_sheets[FAMILY_TAB if source['type']=='beneficiary' else ACTIVITY_TAB]=source['destination']
+            self.sync_google()
+        self.setup_google_timer()
     def setup_google_timer(self):
         self.google_timer.stop()
         if self.cfg['google'].get('enabled'):self.google_timer.start(max(15,self.cfg['google'].get('interval',60))*1000)
     def sync_google(self):
-        if self.busy_sync:return
+        if self.busy_sync or self.busy_google or self.source_dialog_open:return
         if self.dirty:self.say('Google sync is waiting for local edits to be saved.');return
         original_cfg=copy.deepcopy(self.cfg['google']);cfg=copy.deepcopy(original_cfg)
         cfg['sources']=[s for s in cfg.get('sources',[]) if s.get('type')!='donor']
@@ -554,13 +585,14 @@ class Window(QMainWindow):
                 self.say('Google data was read. Sync was deferred because edits or connection settings changed; retry when ready.');return
             try:
                 added,updated=self.store.merge_google(batches);current=self.sheet;self.load_table(current)
+                self.google_status.setText('Google: connected'+(' as '+self.google_identity if self.google_identity else ''))
                 self.say(f'Google sync complete: {added} added, {updated} updated.')
                 # Process every synced worksheet, including sources not currently visible.
                 if self.cfg['auto_pdf']:
                     self.auto_generate()
             except Exception as e:self.say('Could not save synced data: '+str(e))
-        def failed(message):self.busy_sync=False;self.say('Google sync failed: '+message)
-        self.say('Reading Google Sheets...');self.submit(lambda:fetch(cfg),complete,failed)
+        def failed(message):self.busy_sync=False;self.google_status.setText('Google: sync needs attention');self.say('Google sync failed: '+message)
+        self.say('Reading Google Sheets...');self.submit(lambda:fetch(cfg,self.google_account),complete,failed)
     def watch(self):
         try:
             if self.store.stamp()!=self.store.version:
@@ -595,30 +627,81 @@ class Window(QMainWindow):
         webbrowser.open(url)
         self.say('WhatsApp opened. Attach the PDF and send manually; its path has been copied.' if current else 'WhatsApp opened. Send your message manually. If the certificate is not ready, check its status and retry generation.')
     def share_application(self,index):
-        row=self.rows[index];rec=self.record(row);phone=rec['phone'];pdf=None
+        if self.active_workflow==FAMILY_TAB:
+            self.email_application(index);return
+        row=self.rows[index];rec=self.record(row)
         try:
-            if self.active_workflow==FAMILY_TAB:
-                self.store.ensure_ids(self.sheet);self.headers,self.rows=self.store.table(self.sheet);row=self.rows[index];rec=self.record(row)
-                pdf=family_pdf(row,self.headers,rec['name'],self.scope()+':'+rec['id'],DATA/'family_confirmations')
-                message=f"Hello {rec['name'] or 'there'}, please review your family application details in the attached PDF. Reply to confirm they are correct or tell us what needs changing."
-            else:
-                cfg=self.cfg.get('event_message',{})
-                if not cfg.get('event'):
-                    self.configure_event();cfg=self.cfg.get('event_message',{})
-                    if not cfg.get('event'):return
-                message=event_message(cfg.get('template',DEFAULT_MESSAGE),dict(cfg,name=rec['name'],phone=phone))
-            approved=self.review_message(message,pdf)
+            cfg=self.cfg.get('event_message',{})
+            if not cfg.get('event'):
+                self.configure_event();cfg=self.cfg.get('event_message',{})
+                if not cfg.get('event'):return
+            # Google Date is normalized from the explicitly selected attendance column.
+            # Certificate date mapping can differ and must not change activity messages.
+            date=row.get('Date','') if row.get('__fb_source') else row.get(self.mapping().get('activity_date',''),'')
+            message=activity_message(cfg,rec,date,self.cfg.get('country','60'))
+            approved=self.review_message(message,None)
             if approved is None:return
-            if pdf:
-                QApplication.clipboard().setText(str(pdf));QDesktopServices.openUrl(QUrl.fromLocalFile(str(pdf.parent)))
-            webbrowser.open(message_url(phone,approved,self.cfg.get('country','60')))
-            self.say('WhatsApp opened. Attach the confirmation PDF manually.' if pdf else 'WhatsApp opened. Review and send the activity message manually.')
+            webbrowser.open(message_url(rec['phone'],approved,self.cfg.get('country','60')))
+            self.say('WhatsApp opened. Review and send the activity message manually.')
         except Exception as e:self.fail(str(e))
+
+    def review_email(self,recipient,name,pdf,previous):
+        dialog=QDialog(self);dialog.setWindowTitle('Review Family Confirmation Email');dialog.resize(740,650)
+        layout=QFormLayout(dialog)
+        layout.addRow('From',QLabel(self.google_identity or 'Connected Google account (sign-in required to send)'))
+        to=QLineEdit(recipient);to.setReadOnly(True);layout.addRow('To (applicant email)',to)
+        subject=QLineEdit('Please confirm your family application details');layout.addRow('Subject',subject)
+        body=QPlainTextEdit(f'Hello {name or "there"},\n\nPlease review the attached PDF containing your family application details. Reply to this email to confirm they are correct or describe any corrections. This is not an approval of assistance.\n\nThank you,\nFoodbank team')
+        layout.addRow('Message',body)
+        attachment=QPushButton('Open PDF Preview');attachment.clicked.connect(lambda:QDesktopServices.openUrl(QUrl.fromLocalFile(str(pdf))))
+        layout.addRow('Attachment: Family-Application-Confirmation.pdf',attachment)
+        notice=QLabel('Sends from the connected Google account. Check the account above, recipient, full PDF and message. Cancel sends nothing.');notice.setWordWrap(True);layout.addRow(notice)
+        repeat=QCheckBox('I checked Gmail Sent and explicitly want to send another email.')
+        if previous:
+            warning=QLabel('An earlier attempt exists ('+previous.get('status','unknown')+'). If delivery was uncertain, check Gmail Sent before sending again.');warning.setWordWrap(True);layout.addRow(warning);layout.addRow(repeat)
+        reviewed=QCheckBox('I have reviewed the recipient, message and PDF attachment.');layout.addRow(reviewed)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
+        send=buttons.button(QDialogButtonBox.StandardButton.Ok);send.setText('Send Email');send.setEnabled(False)
+        def ready():send.setEnabled(reviewed.isChecked() and (not previous or repeat.isChecked()))
+        reviewed.toggled.connect(ready);repeat.toggled.connect(ready)
+        buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);layout.addRow(buttons)
+        if dialog.exec()!=QDialog.DialogCode.Accepted:return None
+        return build_message(recipient,subject.text(),body.toPlainText(),pdf)
+
+    def email_application(self,index):
+        if self.busy_google:
+            self.say('Wait for Google sign-in to finish before reviewing email.');return
+        try:
+            self.store.ensure_ids(self.sheet);self.headers,self.rows=self.store.table(self.sheet)
+            row=copy.deepcopy(self.rows[index]);rec=self.record(row);key=self.cache_key(rec['id'])
+            if key in self.email_busy:self.say('This email is already being prepared or sent.');return
+            # For imported records use the explicitly mapped source email, independently of certificate mappings.
+            recipient=recipient_address(row.get('Email','') if row.get('__fb_source') else rec['email'])
+            self.email_busy.add(key);self.render()
+            previous=self.email_journal.get(key)
+            pdf=family_pdf(row,self.headers,rec['name'],key,DATA/'family_confirmations')
+            pdf_digest=hashlib.sha256(pdf.read_bytes()).digest()
+            payload=self.review_email(recipient,rec['name'],pdf,previous)
+            if payload is None:self.email_busy.discard(key);self.render();return
+            if hashlib.sha256(pdf.read_bytes()).digest()!=pdf_digest:raise ValueError('The PDF changed during review. Open the preview again before sending.')
+            self.email_journal.reserve(key,previous)
+        except Exception as error:
+            if 'key' in locals():self.email_busy.discard(key)
+            self.render();self.fail(str(error));return
+        def complete(result):
+            self.email_busy.discard(key);self.render()
+            status=result['status']
+            self.say('Email sent with the confirmation PDF attached.' if status=='sent' else
+                     'Email was not sent. Check Google sign-in, Gmail access and the connection, then review again.' if status=='failed' else
+                     'Email delivery is uncertain. Do not retry until you check Gmail Sent. No automatic retry will occur.')
+        def failed(_):complete({'status':'unknown'})
+        self.say('Sending the reviewed email...');self.render()
+        self.submit(lambda:send_reviewed(self.google_account,self.email_journal,key,payload),complete,failed)
 
     def open_output(self):
         folder=DATA/'certificates';folder.mkdir(exist_ok=True);QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
     def closeEvent(self,event):
-        if self.busy_pdf or self.busy_sync:
+        if self.jobs or self.email_busy or self.busy_google or self.busy_pdf or self.busy_sync:
             self.say('Background tasks are still running. Wait for them to finish before closing.');event.ignore();return
         if not self.guard_edits():event.ignore();return
         self.save_timer.stop();event.accept()

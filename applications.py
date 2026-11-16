@@ -1,5 +1,6 @@
 """Application confirmation PDFs and configurable event messages."""
 import hashlib
+import re
 from html import escape
 from pathlib import Path
 from string import Formatter
@@ -29,8 +30,23 @@ def family_pdf(row,headers,name,record_id,folder):
     original=[h for h in headers if h.startswith('Google · ')]
     fields=original or [h for h in headers if not h.startswith('__fb_')]
     body=''.join('<tr><td><b>'+escape(h.removeprefix('Google · '))+'</b></td><td>'+escape(text(row.get(h)) or '(Not provided)').replace('\n','<br>')+'</td></tr>' for h in fields)
-    document=QTextDocument();document.setHtml('<h1>Family Application Confirmation</h1><p>Applicant: '+escape(name)+'</p><p>Please review the information below and reply on WhatsApp to confirm it is correct or describe any corrections. This document is not an approval of assistance.</p><table border="1" cellspacing="0" cellpadding="7" width="100%">'+body+'</table><p>Confirmation: Correct / Corrections required</p>')
+    document=QTextDocument();document.setHtml('<h1>Family Application Confirmation</h1><p>Applicant: '+escape(name)+'</p><p>Please review the information below and reply by email to confirm it is correct or describe any corrections. This document is not an approval of assistance.</p><table border="1" cellspacing="0" cellpadding="7" width="100%">'+body+'</table><p>Confirmation: Correct / Corrections required</p>')
     temporary=target.with_suffix('.tmp.pdf')
     writer=QPdfWriter(str(temporary));writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4));writer.setPageMargins(QMarginsF(15,15,15,15));writer.setTitle('Family Application Confirmation');document.print_(writer);del writer
     if not temporary.read_bytes().startswith(b'%PDF-'):raise RuntimeError('Unable to create confirmation PDF.')
     temporary.replace(target);return target
+
+
+def activity_message(config, record, attendance_date, country='60'):
+    if not text(attendance_date).strip():
+        raise ValueError('This volunteer has no attendance date. Choose the participation-date column and complete the source response; do not use Timestamp.')
+    if not text(record.get('phone')).strip():
+        raise ValueError('This volunteer has no phone number. Complete the mapped phone field before sharing.')
+    phone=text(record['phone']).strip()
+    digits=re.sub(r'\D','',phone)
+    if not re.fullmatch(r'[+0-9() .-]+',phone) or not 7<=len(digits)<=15:
+        raise ValueError('The volunteer phone number is invalid. Check the mapped phone field before sharing.')
+    template=config.get('template',DEFAULT_MESSAGE)
+    if not any(field=='date' for _,field,_,_ in Formatter().parse(template)):
+        raise ValueError('The activity message template must contain {date} for each volunteer’s chosen participation date.')
+    return event_message(template,dict(config,name=record['name'],phone=record['phone'],date=attendance_date))

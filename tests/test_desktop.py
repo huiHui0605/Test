@@ -22,11 +22,12 @@ class DesktopTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         self.patch1=patch.object(main,'DATA',self.root);self.patch1.start()
         self.patch2=patch.object(main,'SETTINGS',self.root/'settings.json');self.patch2.start()
+        self.identity_patch=patch.object(main.GoogleAccount,'identity',side_effect=RuntimeError('Disconnected test account'));self.identity_patch.start()
         self.window=main.Window();self.window.auto_pdf.setChecked(False);self.window.show();pump(260)
     def tearDown(self):
         self.window.dirty=False;self.window.busy_pdf=False;self.window.busy_sync=False
         self.window.save_timer.stop();self.window.watch_timer.stop();self.window.google_timer.stop();self.window.close();self.window.deleteLater();pump()
-        self.patch2.stop();self.patch1.stop();self.temp.cleanup()
+        self.identity_patch.stop();self.patch2.stop();self.patch1.stop();self.temp.cleanup()
     def test_interface_and_dialogs_use_english(self):
         import ast,re
         from PySide6.QtWidgets import QWidget,QComboBox,QTableWidget
@@ -89,11 +90,12 @@ class DesktopTests(unittest.TestCase):
         w.workflow_tabs.setCurrentIndex(main.ACTIVITY_TAB);self.assertEqual(w.table.item(0,0).text(),'Manual Volunteer')
     def test_family_pdf_and_activity_share_preview(self):
         w=self.window;h,_=w.store.table('Records')
-        w.store.save_rows('Records',h,[{'Participant Name':'Family Example','Type':'beneficiary','Phone':'0123456789'},{'Participant Name':'Volunteer Example','Type':'volunteer','Phone':'0123456789'}])
+        w.store.save_rows('Records',h,[{'Participant Name':'Family Example','Type':'beneficiary','Phone':'0123456789','Email':'family@example.test'},{'Participant Name':'Volunteer Example','Type':'volunteer','Phone':'0123456789','Date':'2026-12-01'}])
         w.load_table('Records');w.workflow_tabs.setCurrentIndex(main.FAMILY_TAB)
-        with patch.object(w,'review_message',return_value=None),patch('main.webbrowser.open') as browser:
+        with patch.object(w,'review_email',return_value=None),patch('main.webbrowser.open') as browser:
             w.share(w.visible[0]);browser.assert_not_called()
         self.assertEqual(len(list((self.root/'family_confirmations').glob('*.pdf'))),1)
+        w.cfg['mapping'][w.mapping_key()]={'activity_date':'Date'}
         w.workflow_tabs.setCurrentIndex(main.ACTIVITY_TAB);w.cfg['event_message']={'event':'Food Packing','date':'Saturday','time':'09:00','location':'Main Hall','details':'Bring water.','template':main.DEFAULT_MESSAGE}
         with patch.object(w,'review_message',side_effect=lambda message,pdf:message) as preview,patch('main.webbrowser.open') as browser:
             w.share(w.visible[0]);message=preview.call_args.args[0]
@@ -142,7 +144,7 @@ class DesktopTests(unittest.TestCase):
         w=self.window;mapping=main.MappingDialog(w.headers,{},w)
         self.assertEqual(mapping.value()['name'],'Participant Name');mapping.close()
         template=main.TemplateDialog(w.cfg,w);self.assertIn('volunteer',template.value()['templates']);template.close()
-        google=main.GoogleDialog({},w);google.add({'name':'Full Name'});self.assertEqual(google.value()['sources'][0]['name'],'Full Name');google.close()
+        google=main.GoogleDialog({},w);self.assertEqual(len(google.panels),2);self.assertEqual(google.panels[0].kind,'volunteer');google.close()
     def test_sync_callback_no_duplicate(self):
         w=self.window
         cfg={'sources':[{'destination':'Google Volunteers'}]};w.cfg['google']=cfg
@@ -172,8 +174,8 @@ class DesktopTests(unittest.TestCase):
             w.auto_generate();pump(150)
             self.assertEqual(generate.call_count,1);self.assertEqual(generate.call_args.args[0]['type'],'volunteer')
         dialog=main.TemplateDialog(w.cfg,w);self.assertNotIn('donor',dialog.paths);dialog.close()
-        dialog=main.GoogleDialog({},w);dialog.add({});box=dialog.table.cellWidget(0,0)
-        self.assertEqual([box.itemText(i) for i in range(box.count())],['volunteer','beneficiary']);dialog.close()
+        dialog=main.GoogleDialog({},w)
+        self.assertEqual([panel.kind for panel in dialog.panels],['volunteer','beneficiary']);dialog.close()
 
     def test_existing_workbook_gets_certificate_column_without_losing_ids(self):
         from openpyxl import Workbook
@@ -190,6 +192,118 @@ class DesktopTests(unittest.TestCase):
         other=main.ExcelStore(w.store.path);h,_=other.table('Records');other.save_rows('Records',h,[{'Participant Name':'External'}])
         w.watch();self.assertTrue(w.dirty);self.assertFalse(w.save_timer.isActive())
         self.assertEqual(main.ExcelStore(w.store.path).table('Records')[1][0]['Participant Name'],'External')
+
+    def prepare_family(self):
+        w=self.window;headers,_=w.store.table('Records')
+        w.store.save_rows('Records',headers,[{'Participant Name':'Example Family','Type':'beneficiary','Email':'family@example.test','Phone':'0123456789'}])
+        w.load_table('Records');w.workflow_tabs.setCurrentIndex(main.FAMILY_TAB)
+        return w,w.visible[0]
+
+    def test_email_cancel_never_reserves_or_sends(self):
+        w,index=self.prepare_family()
+        with patch.object(w,'review_email',return_value=None),patch('main.send_reviewed') as send:
+            w.share(index);send.assert_not_called()
+        key=w.cache_key(w.record(w.rows[index])['id'])
+        self.assertEqual(w.email_journal.get(key),{});self.assertFalse(w.email_busy)
+        self.assertEqual(w.table.cellWidget(0,len(w.headers)+1).text(),'Review & Email')
+
+    def test_email_double_click_and_retry_require_new_review(self):
+        w,index=self.prepare_family();callbacks=[]
+        def queued(fn,complete,failed):callbacks.append((fn,complete))
+        with patch.object(w,'review_email',return_value={'raw':'fictional'}) as review,patch.object(w,'submit',side_effect=queued):
+            w.share(index);w.share(index)
+            self.assertEqual(review.call_count,1);self.assertEqual(len(callbacks),1)
+        key=next(iter(w.email_busy));self.assertEqual(w.email_journal.get(key)['status'],'sending')
+        w.email_journal.finish(key,'unknown');callbacks[0][1]({'status':'unknown'})
+        self.assertFalse(w.email_busy);self.assertIn('check Gmail Sent',w.info.text())
+        with patch.object(w,'review_email',return_value=None) as review:
+            w.share(index)
+            self.assertEqual(review.call_args.args[3]['status'],'unknown')
+        self.assertEqual(w.email_journal.get(key)['status'],'unknown')
+
+    def test_review_dialog_requires_review_and_explicit_resend(self):
+        from PySide6.QtWidgets import QDialogButtonBox,QCheckBox
+        w,index=self.prepare_family()
+        def inspect():
+            dialog=QApplication.activeModalWidget();buttons=dialog.findChild(QDialogButtonBox)
+            send=buttons.button(QDialogButtonBox.StandardButton.Ok)
+            self.assertFalse(send.isEnabled())
+            boxes=dialog.findChildren(QCheckBox)
+            reviewed=next(b for b in boxes if b.text().startswith('I have reviewed'))
+            repeat=next(b for b in boxes if b.text().startswith('I checked Gmail'))
+            reviewed.setChecked(True);self.assertFalse(send.isEnabled())
+            repeat.setChecked(True);self.assertTrue(send.isEnabled());dialog.reject()
+        QTimer.singleShot(0,inspect)
+        self.assertIsNone(w.review_email('family@example.test','Example Family',self.root/'unused.pdf',{'status':'sent'}))
+
+    def test_email_missing_address_does_not_open_browser_or_send(self):
+        w,index=self.prepare_family();w.rows[index]['Email']=''
+        w.store.save_rows(w.sheet,w.headers,w.rows);w.load_table(w.sheet)
+        with patch.object(w,'fail') as fail,patch.object(w,'review_email') as preview,patch('main.send_reviewed') as send:
+            w.share(index);preview.assert_not_called();send.assert_not_called();self.assertIn('email address',fail.call_args.args[0])
+
+    def test_activity_uses_source_date_even_when_certificate_mapping_differs(self):
+        w=self.window
+        batch={'sheet':'Google Volunteers','source':'source','headers':['Participant Name','Type','Phone','Date','Timestamp'],'rows':[{'Participant Name':'Example A','Type':'volunteer','Phone':'0123456789','Date':'2026-12-01','Timestamp':'WRONG','__fb_source':'source','__fb_key':'a'}, {'Participant Name':'Example B','Type':'volunteer','Phone':'0123456788','Date':'2026-12-08','Timestamp':'WRONG','__fb_source':'source','__fb_key':'b'}]}
+        w.store.merge_google([batch]);w.load_table('Google Volunteers');w.workflow_tabs.setCurrentIndex(main.ACTIVITY_TAB)
+        w.cfg['mapping'][w.mapping_key()]={'date':'Timestamp'}
+        w.cfg['event_message']={'event':'Packing','date':'GLOBAL WRONG','template':main.DEFAULT_MESSAGE}
+        with patch.object(w,'review_message',return_value=None) as review,patch('main.webbrowser.open') as browser:
+            w.share(0);self.assertIn('2026-12-01',review.call_args.args[0]);self.assertNotIn('WRONG',review.call_args.args[0])
+            w.share(1);self.assertIn('2026-12-08',review.call_args.args[0]);browser.assert_not_called()
+
+    def test_source_picker_metadata_headers_and_saved_mapping(self):
+        from unittest.mock import Mock
+        w=self.window;account=Mock()
+        account.spreadsheets.return_value=[{'id':'volunteer-sheet','name':'Tally Responses'},{'id':'family-sheet','name':'Family Responses'}]
+        account.worksheets.return_value=[{'sheetId':7,'title':'Responses'}]
+        account.headers.return_value=['Full Name','Phone','Email','Participation date','Submission ID']
+        def immediately(fn,done,failed):done(fn())
+        with patch.object(w,'submit',side_effect=immediately):
+            dialog=main.GoogleDialog({},w,account=account);dialog.list_sheets()
+            for index,panel in enumerate(dialog.panels):
+                panel.sheet.setCurrentIndex(index+1);panel.worksheet.setCurrentIndex(1)
+                for key,header in [('name','Full Name'),('phone','Phone'),('email','Email'),('date','Participation date'),('key','Submission ID')]:panel.fields[key].setCurrentText(header)
+            result=dialog.value();self.assertEqual(len(result['sources']),2)
+            self.assertEqual(result['sources'][0]['date'],'Participation date');self.assertEqual(result['sources'][1]['email'],'Email')
+            self.assertNotIn('credentials',result);self.assertEqual(account.headers.call_count,2)
+            dialog.close()
+            restored=main.GoogleDialog(result,w,account=account);restored.list_sheets()
+            self.assertEqual(restored.value(),result);restored.close()
+
+    def test_source_picker_cancel_keeps_settings_and_rejects_id_change(self):
+        w=self.window;original={'sources':[{'type':'volunteer','spreadsheet':'sheet','worksheet_id':7,'destination':'Volunteers','key':'Old ID'}]}
+        dialog=main.GoogleDialog(original,w);panel=dialog.panels[0]
+        panel.sheet.addItem('Sheet','sheet');panel.sheet.blockSignals(True);panel.sheet.setCurrentIndex(1);panel.sheet.blockSignals(False)
+        panel.worksheet.blockSignals(True);panel.worksheet.addItem('Responses',{'sheetId':7,'title':'Responses'});panel.worksheet.setCurrentIndex(1);panel.worksheet.blockSignals(False)
+        for key,value in [('name','Name'),('phone','Phone'),('date','Participation date'),('key','New ID')]:panel.fields[key].addItem(value,value);panel.fields[key].setCurrentIndex(1)
+        with self.assertRaisesRegex(ValueError,'new local worksheet'):panel.value()
+        dialog.reject();self.assertEqual(original['sources'][0]['key'],'Old ID')
+
+    def test_google_network_work_does_not_block_event_loop(self):
+        import threading
+        w=self.window;release=threading.Event();completed=[];ticks=[]
+        def network_wait():release.wait(2);return 'staff@example.test'
+        timer=QTimer();timer.setInterval(10);timer.timeout.connect(lambda:ticks.append(True));timer.start()
+        w.google_task(network_wait,lambda result:completed.append(result))
+        pump(80);self.assertTrue(w.busy_google);self.assertGreater(len(ticks),2)
+        release.set();pump(100);timer.stop()
+        self.assertEqual(completed,['staff@example.test']);self.assertFalse(w.busy_google)
+
+    def test_disconnect_clears_authorization_and_stops_auto_sync(self):
+        w=self.window;w.cfg['google']['enabled']=True;w.setup_google_timer()
+        with patch.object(w.google_account,'disconnect') as disconnect:
+            w.disconnect_google();pump(100);disconnect.assert_called_once()
+        self.assertFalse(w.cfg['google']['enabled']);self.assertFalse(w.google_timer.isActive())
+        self.assertTrue(w.store.path.exists());self.assertIn('disconnected',w.google_status.text())
+
+    def test_email_attempt_survives_window_restart(self):
+        w,index=self.prepare_family();key=w.cache_key(w.record(w.rows[index])['id'])
+        w.email_journal.reserve(key)
+        from email_delivery import DeliveryJournal
+        self.assertIn('uncertain',DeliveryJournal(self.root/'email_delivery.sqlite3').label(key))
+        with patch.object(w,'review_email',return_value=None) as review,patch('main.send_reviewed') as send:
+            w.share(index);self.assertEqual(review.call_args.args[3]['status'],'sending');send.assert_not_called()
 
 
 if __name__=='__main__':unittest.main()

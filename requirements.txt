@@ -7,3 +7,6 @@ google-auth-httplib2>=0.2,<1
 google-api-python-client>=2.130,<3
 httplib2>=0.22,<1
 PySocks>=1.7,<2
+google-auth-oauthlib>=1.2,<2
+keyring>=25,<26
+requests>=2.31,<3

@@ -1,6 +1,8 @@
 # Foodbank Community Admin
 
-An English-language PySide6 desktop application using Excel as its database. Manage volunteers and beneficiary families; generate PDF certificates from PPTX templates; sync Google Sheets; and open WhatsApp for manual sharing. No Streamlit or web server is required.
+An English-language PySide6 desktop application using Excel as its database. Manage volunteers and beneficiary families; generate PDF certificates from PPTX templates; connect Google with desktop OAuth, sync two selected response Sheets, email family confirmation PDFs through Gmail after review, and open WhatsApp for manual volunteer sharing. No Streamlit or web server is required.
+
+[中文负责人完整操作指南](OPERATOR_GUIDE_ZH.md) · [Validation and live acceptance limits](VALIDATION.md)
 
 ![Desktop interface](examples/interface.png)
 
@@ -40,20 +42,22 @@ Every tab uses the same Excel-style editing controls. Tabs filter the selected w
 
 Six empty entry rows remain at the bottom. Start typing in any of them to create a record; six new empty slots remain below it. The current tab supplies the type automatically when a Type column is mapped. Empty entry rows are not saved to Excel. If an imported sheet has no Type column, configure its default type in Worksheet Columns. Imported Google response rows remain read-only, but you can add manual records in the blank rows below them. Manual records are not sent back to Google.
 
-**Family confirmation:** select the Family Applications tab, choose its synced response worksheet, then click the applicant's **Share** button. The app creates an A4 PDF containing every original Google question/answer (including unanswered fields), with a request to confirm accuracy or provide corrections. Review the WhatsApp message, click Open WhatsApp, and attach the PDF manually. Files are under `data/family_confirmations`; no PowerPoint or LibreOffice is needed for these forms. This is a review summary, not an approval or an interactive fillable PDF.
+**Family confirmation:** click the applicant’s **Review & Email** button in Family Applications. The app creates an A4 PDF containing every original question/answer, including unanswered fields. Check the read-only applicant email address, subject, message and **Open PDF Preview**. Tick the review confirmation and click **Send Email** to send the actual PDF attachment through the connected Gmail account. Cancel sends nothing; syncing never sends mail. This is a request to confirm/correct application details, **not an approval of assistance**. Files remain under `data/family_confirmations`; no PowerPoint or LibreOffice is needed for these PDFs. Upload/file answers retain their Sheet link/text; private file contents are not downloaded.
+
+A durable, payload-free journal (`data/email_delivery.sqlite3`) reserves an attempt before sending. Repeated clicks are blocked. Any previous attempt requires a new review and explicit resend acknowledgement. Timeout, server failure or an interrupted attempt is **uncertain**: check Gmail **Sent** before resending. Sends have no automatic retry, including HTTP authentication retries; API-level exactly-once delivery is not claimed. Gmail accepting a send does not prove final recipient delivery. Do not delete the journal to clear warnings.
 
 **Open Application Form** opens the supplied family form editor (requires the form owner's Google permissions):
 https://docs.google.com/forms/d/1Z8bwgdGnaaTqHR5WCY-RQu0gD9v-o25xoUGByiqW2Ok/edit
 
-A form editing URL is not a response spreadsheet URL. Open the form editor → Responses → green Google Sheets icon to obtain the linked Sheet URL. The owner has not provided that response Sheet or credentials yet, so live sync is not configured. Link the form to a Google Sheet and configure that response Sheet URL and service-account permissions in Google Sheets Connection. Set its type to beneficiary. The form content has not been verified; no fixed question list is assumed: all response-sheet headings and values are preserved dynamically.
+A form editing URL is not a response spreadsheet URL. Open the form editor → Responses → green Google Sheets icon to obtain the linked Sheet URL. The owner has not provided that response Sheet or credentials yet, so live sync is not configured. Link the form to a Google Sheet, give the operator’s Google account access, and select it in the family panel of Google Sheets Connection. The form content has not been verified; no fixed question list is assumed: all response-sheet headings and values are preserved dynamically.
 
-**Volunteer activity messages:** configure a volunteer Google source and select it under Volunteer Activities. Click **Event Message** to save the event, date, time, location, details, and message template. Supported placeholders: `{name}`, `{phone}`, `{event}`, `{date}`, `{time}`, `{location}`, `{details}`. Each Share button fills the selected applicant's details and opens an editable preview. Cancel sends nothing; Open WhatsApp opens the selected phone number's chat for manual sending. Activity messages do not require a certificate PDF.
+**Volunteer activity messages:** volunteer registrations come from **Tally → native Google Sheets integration → this app**, not direct Tally account access. Select the response Sheet and explicitly map the applicant’s **Attendance date column (not Timestamp)**. Click **Event Message** to save event, time, location, details and message template. Supported placeholders: `{name}`, `{phone}`, `{event}`, `{date}`, `{time}`, `{location}`, `{details}`. `{date}` is required and comes from **each applicant’s selected participation date**, never the old global date or the submission timestamp. For manual Excel records, explicitly choose **Activity participation date (not Timestamp)** in Worksheet Columns. Certificate date mappings are independent. Missing/invalid phone numbers or attendance dates block sharing. **WhatsApp Share** opens an editable preview; **Open WhatsApp** opens that person’s chat for manual sending. No automatic WhatsApp messages or attachments are sent.
 
 Settings and advanced actions remain under **Settings** and **More Actions**. All interface text is English; participant data keeps its original language.
 
 ## Excel records and column mapping
 
-The default database is `data/community.xlsx`. **Open Excel** can select an existing `.xlsx` or `.xlsm` workbook; its first row is treated as column headings. **Settings → Worksheet Columns** selects the participant name, type, phone, attendance date, and certificate number columns. If a worksheet has no Type column, choose a default type for that worksheet.
+The default database is `data/community.xlsx`. **Open Excel** can select an existing `.xlsx` or `.xlsm` workbook; its first row is treated as column headings. **Settings → Worksheet Columns** selects the participant name, type, phone, email, activity participation date, certificate attendance date, and certificate number columns. If a worksheet has no Type column, choose a default type for that worksheet.
 
 Edit cells directly, press Tab to move between cells, search any field, switch workflow tabs, and paste multiple rows or columns from Excel with Ctrl+V. Ctrl+C copies selected cells. While a filter is active, paste fills existing visible rows; clear filters to paste additional rows.
 
@@ -80,28 +84,38 @@ The original template is never edited. A temporary PPTX is filled and converted 
 - Windows `auto` uses PowerPoint COM and requires PowerPoint and pywin32. On Linux/macOS, `auto` uses LibreOffice Impress.
 - Missing templates/converters and export errors appear in the certificate status. Fix the prerequisite and click **More Actions → Generate / Retry PDFs**.
 - Long names may overflow the original design; enlarge the text box or adjust template font sizes. LibreOffice and PowerPoint may render fonts and line breaks differently.
-- Historical PDFs are retained. The Share action uses only a PDF whose signature matches the current record and template.
+- Historical PDFs are retained. The WhatsApp Share action uses only a PDF whose signature matches the current record and template.
 
-## Connect Google Forms / Google Sheets
+## Google desktop sign-in and two selected sources
 
-1. Link Google Form responses to a Google Sheet. For Tally volunteer registrations, use Tally → Integrations → Google Sheets, then connect that response Sheet here. No direct Tally API is used.
-2. Enable the **Google Sheets API** in Google Cloud, create a service account, and download its JSON key to a secure local location.
-3. Share each Google Sheet with the JSON file's `client_email`, granting **Viewer** access. Never commit this key to GitHub.
-4. Open **Settings → Google Sheets Connection**, select the credentials JSON, and add a source for each registration category. Enter the type, Sheet URL/ID, A1 range including its header row (for example `'Form Responses 1'!A1:ZZ`), and a separate local destination worksheet name (maximum 31 characters).
-5. Enter the exact source headings for the name, phone, email, and date columns. Name is required; the others are optional. A unique, nonempty response ID column is strongly recommended.
-6. Enable **Auto sync** (default interval: 60 seconds), or click **Sync Google** manually.
+A technical administrator must first configure an organization-owned **OAuth Desktop App** client. Ordinary staff use **Connect Google** in their browser; no service account or private-key selection is part of their workflow. See the [Chinese guide](OPERATOR_GUIDE_ZH.md#4-技术负责人一次性-google-cloud-配置) for full deployment steps.
 
-Source fields are retained as `Google · <original heading>` columns alongside normalized columns. Each source owns a separate local worksheet, whose imported response rows are read-only in the app. Manual records can be entered in the empty rows below.
+1. Enable **Sheets**, **Drive**, and **Gmail** APIs in the Google Cloud project; configure the OAuth consent/audience, test users, scopes and Desktop App client.
+2. Keep the downloaded client JSON outside the repository/source ZIP. Select it once using **Settings → Developer Google Setup**, or set `FOODBANK_GOOGLE_CLIENT` to its path. Never share passwords or tokens in chat.
+3. Click **Connect Google**, choose the account, and grant the requested permissions. Login uses PKCE and a temporary loopback callback bound to `127.0.0.1`. Browser authorization times out after three minutes; network operations run in background workers with transport timeouts.
+4. In **Settings → Google Sheets Connection**, click **List My Google Sheets**. Drive lists spreadsheet metadata only. Select **both** the Tally volunteer response Sheet/worksheet and the family Google Form response Sheet/worksheet. Only explicitly selected worksheet headers and rows are read; the app does not sync all accessible files.
+5. Map the actual headers using the dropdowns: name, phone, email, participation date and unique registration ID as applicable. Name is required for both; volunteer phone/date and family email are required. Worksheet headers must be nonempty, unique, and not start with `__fb_`. Do not select Timestamp for participation date.
+6. Give each source its own **Local Excel worksheet**. Prefer a nonempty unique Submission ID/application ID. Without one, explicitly acknowledge **Use row numbers (append-only, no unique ID)**: never sort, insert or delete existing response rows. Google Forms does not promise a unique Submission ID, and a timestamp is not necessarily unique.
+7. Click **Save**. **Sync Google** checks manually; **Auto sync while the app is open** polls every 60 seconds by default. Saved choices and OS-stored authorization are reused on restart. Closing the app stops polling.
+8. Use **Disconnect** to remove local authorization and disable auto sync. Reconnect when the status requests authorization. Local history remains. To revoke the Google-side grant too, remove the app under Google Account third-party connections.
 
-Sync is **Google → local Excel only**; it never writes to Google. Stable response IDs update existing records without duplicating them. Records removed from Google are not automatically deleted from local history. New volunteer responses trigger certificate checks; beneficiaries are synced without certificates and can receive application confirmation PDFs from the Family Applications tab.
+Original form columns remain as `Google · <original heading>` alongside normalized columns. Stable response IDs update the same local record after sorting or worksheet renaming (new sources use numeric worksheet IDs); new IDs append, source deletions retain local history. Changing source or ID scheme requires a new destination worksheet. Migrating an older range/name-based source to the new picker also requires a new destination so old history is preserved. Google rows remain read-only locally; manual rows can still be entered beneath them.
 
-**Without a unique ID column, identity is based on Google row numbers: sources must be append-only. Do not sort, insert, or delete existing response rows.** Use a new destination worksheet when changing a source, registration type, or identity-column scheme. A timestamp is suitable only if it is truly unique.
+### Authorization and Gmail conditions
 
-Real access requires your credentials and sharing permissions. Network access to `oauth2.googleapis.com` and `sheets.googleapis.com` is required. Failures appear in the status area and automatic sync retries on the next interval; local Excel editing remains available.
+Scopes: `openid`, `userinfo.email`, `drive.metadata.readonly`, `spreadsheets.readonly`, `gmail.send` (the latter four use the `https://www.googleapis.com/auth/` prefix). Drive metadata permission is broader than the selected Sheet contents and is needed to list accessible spreadsheets; the app restricts its query to Sheets. Gmail permission sends as the authorized mailbox and does not read mail. The account must have Gmail or a licensed/enabled Workspace Gmail service, with organizational policy permitting the app.
+
+External apps in Testing usually have seven-day refresh-token lifetimes for this scope combination. Production external distribution can require Google OAuth verification, privacy-policy/app/domain information and, for restricted scopes such as Drive metadata, additional review or security assessment depending on deployment and server-side data handling. Internal organization-only apps have different eligibility/policy conditions. Do not promise a configuration-free or automatically verification-exempt deployment. See Google’s current [OAuth production guidance](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification), [Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth) and [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes).
+
+Tokens are stored only in Windows Credential Manager, macOS Keychain or Linux Secret Service/KWallet using `keyring`; unsupported/insecure backends fail closed. Refreshes update the OS store. Tokens never go into settings, logs or source ZIPs. Settings contain the client-file path and source selections. The data directory and Excel/PDF backups still contain personal information and require normal local access controls. Changing the data-directory path may require signing in again.
+
+Tally’s [official guide](https://tally.so/help/google-sheets-integration), checked 2026-11-16, documents **Integrations → Google Sheets → Connect → Log in to Google**, spreadsheet selection and **Export existing submissions**. Check that switch and verify row counts before assuming historical responses were backfilled. No Zapier/Make/direct Tally API is required. The family owner must still supply/link the actual response Sheet; the provided Form edit URL is not a data source.
+
+Network access is needed to Google authorization/token endpoints, Drive, Sheets, OAuth userinfo and Gmail APIs. Errors are sanitized before reaching the UI; never enable verbose HTTP/OAuth logging with real personal data. Real OAuth, source access and Gmail delivery require acceptance testing on the configured target computer.
 
 ## WhatsApp sharing
 
-The last table column contains **Share**. Clicking it opens the recipient's chat. If a current PDF is ready, the app also opens its folder and copies the PDF path. **Attach the PDF and send manually in WhatsApp.** Ordinary WhatsApp links cannot attach local files automatically; no messages are sent automatically.
+The last volunteer-table column contains **WhatsApp Share**. Clicking it opens the recipient's chat. If a current PDF is ready, the app also opens its folder and copies the PDF path. **Attach the PDF and send manually in WhatsApp.** Ordinary WhatsApp links cannot attach local files automatically; no messages are sent automatically.
 
 Default country code: Malaysia `60`. Local numbers starting with `0` are normalized accordingly; `+60...` and `0060...` are supported. Change the default with **Settings → WhatsApp Country Code**. Store phone numbers as Excel text to preserve leading zeros.
 
@@ -123,6 +137,6 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -v
 QT_QPA_PLATFORM=offscreen FOODBANK_TEST_SOFFICE=/usr/bin/libreoffice .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Google tests use mocked API responses; they do not verify your live account. WhatsApp tests intercept browser calls and send no messages. Windows PowerPoint COM export must be checked on the target machine.
+Google/Gmail tests use mocked API responses; they do not verify your live account or send email. The full validation report distinguishes mock, Linux PDF, and remaining Windows/live checks. WhatsApp tests intercept browser calls and send no messages. Windows PowerPoint COM export must be checked on the target machine.
 
-Code: `applications.py` (family confirmation PDFs and activity messages), `main.py` (English desktop UI/background tasks), `storage.py` (Excel), `certificates.py` (PPTX/PDF/share URLs), `google_sync.py` (Google read adapter), and `tests/`. `tools/create_examples.py` regenerates fictitious examples; `tools/package_source.py` packages the allowlisted source/assets without live records, credentials, caches, or virtual environments. This is Python source, not a Windows executable installer.
+Code: `google_account.py` (secure desktop OAuth/API clients), `google_dialog.py` (two-source picker), `email_delivery.py` (MIME email and durable delivery journal), `applications.py` (family confirmation PDFs and activity messages), `main.py` (English desktop UI/background tasks), `storage.py` (Excel), `certificates.py` (PPTX/PDF/share URLs), `google_sync.py` (Google read adapter), and `tests/`. `tools/create_examples.py` regenerates fictitious examples; `tools/package_source.py` packages the allowlisted source/assets without live records, credentials, caches, or virtual environments. This is Python source, not a Windows executable installer.
