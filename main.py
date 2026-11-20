@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBo
     QMessageBox,QDialog,QFormLayout,QDialogButtonBox,QCheckBox,QSpinBox,QTabWidget,
     QAbstractItemView,QInputDialog,QStyledItemDelegate,QMenu,QStyle,QTabBar,QPlainTextEdit)
 from storage import ExcelStore, ConflictError, text
-from certificates import kind, markers, validate_template, generate_one, certificate_signature, whatsapp_url
+from certificates import kind, markers, validate_template, generate_one, certificate_signature, certificate_values, attendance_text, whatsapp_url
 from google_sync import fetch_account as fetch
 from google_account import GoogleAccount
 from google_dialog import GoogleDialog
@@ -300,6 +300,10 @@ class Window(QMainWindow):
     def record(self,row,mapping=None):
         mapping=mapping or self.mapping()
         rec={key:text(row.get(mapping.get(key,''))) for key in ALIASES}
+        rec['date']=row.get(mapping.get('date',''))
+        rec['cert_no']=row.get(mapping.get('cert_no',''))
+        rec=certificate_values(rec)
+        rec['cert_no']=text(rec.get('cert_no'))
         if mapping['default_type']!='Use Type column':rec['type']=mapping['default_type']
         rec['type']=kind(rec['type']);rec['id']=row.get('__fb_id','')
         return rec
@@ -318,8 +322,12 @@ class Window(QMainWindow):
         self.table.blockSignals(True);self.table.clearContents();self.table.setRowCount(len(self.visible));self.table.setColumnCount(len(self.headers)+2);self.table.setHorizontalHeaderLabels(self.headers+['Application Status' if self.active_workflow in (FAMILY_TAB,ACTIVITY_TAB) else 'Certificate Status','Email' if self.active_workflow==FAMILY_TAB else 'WhatsApp'])
         for ui,i in enumerate(self.visible):
             row=self.rows[i]
+            mapping=self.mapping()
             for c,h in enumerate(self.headers):
-                item=QTableWidgetItem(text(row.get(h)))
+                value=row.get(h)
+                display=attendance_text(value) if h in (mapping.get('date'),mapping.get('cert_no')) and hasattr(value,'isoformat') else text(value)
+                if h==mapping.get('date'):display=attendance_text(value)
+                item=QTableWidgetItem(display)
                 if row.get('__fb_source'):item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(ui,c,item)
             rec=self.record(row);entry=self.cache.get(self.cache_key(rec['id']),{})

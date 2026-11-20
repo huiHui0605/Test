@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
 from pptx import Presentation
@@ -14,6 +15,32 @@ from pptx import Presentation
 KINDS = {'volunteer':'volunteer','志愿者':'volunteer','義工':'volunteer','sukarelawan':'volunteer',
          'donor':'donor','捐赠者':'donor','捐贈者':'donor','penderma':'donor',
          'beneficiary':'beneficiary','有困难的家庭':'beneficiary','困难家庭':'beneficiary','受助家庭':'beneficiary'}
+
+
+def attendance_text(value):
+    """Format the attendance field as a date without changing source timestamps."""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    result = str(value or '').strip()
+    if len(result) > 10 and result[10] in ('T', ' '):
+        try:
+            return datetime.fromisoformat(result).date().isoformat()
+        except ValueError:
+            pass
+    return result
+
+
+def certificate_values(record):
+    result = dict(record)
+    result['date'] = attendance_text(record.get('date'))
+    # Excel can silently convert slash-separated identifiers into dates. The
+    # intended identifier cannot safely be recovered from that datetime value.
+    if isinstance(record.get('cert_no'), date):
+        result['cert_no'] = ''
+        result['cert_no_is_date'] = True
+    return result
 
 
 def kind(value):
@@ -140,15 +167,19 @@ def convert_pdf(pptx, output, engine='auto', soffice=''):
 
 
 def certificate_signature(record, template, marker, engine):
+    record=certificate_values(record)
     fields={k:str(record.get(k,'')) for k in ('id','name','type','date','cert_no')}
-    fields.update(replacement_version=3,template=hashlib.sha256(Path(template).read_bytes()).hexdigest(),marker=marker,engine=engine)
+    fields.update(replacement_version=4,template=hashlib.sha256(Path(template).read_bytes()).hexdigest(),marker=marker,engine=engine)
     return hashlib.sha256(json.dumps(fields,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
 def generate_one(record, templates, output_dir, previous=None, engine='auto', soffice=''):
+    record=certificate_values(record)
     k=kind(record.get('type'))
     if k!='volunteer': return {'status':'Not applicable'}
     if not str(record.get('name','')).strip(): return {'status':'Name required'}
+    if record.get('cert_no_is_date'):
+        return {'status':'Certificate number is stored as an Excel date. Set the source cell to Text and re-enter the exact certificate number, then reload or sync.'}
     cfg=templates.get(k,{})
     template=Path(cfg.get('path',''))
     if not template.is_file(): return {'status':f'{k.title()} template required'}

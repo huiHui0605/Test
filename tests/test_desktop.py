@@ -5,6 +5,7 @@ os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 import tempfile
 from pathlib import Path
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 from PySide6.QtWidgets import QApplication,QDialog
 from PySide6.QtCore import QEventLoop,QTimer
@@ -122,7 +123,7 @@ class DesktopTests(unittest.TestCase):
         h+=['Printed Name','Attend Date','Cert No']
         people=[('Alice Example','2026-11-20','0007'),('Bob Example','2026-11-21','0008'),('Alice Example','2026-11-22','0009')]
         w.store.save_rows('Records',h,[{'Participant Name':'Unmapped Name','Type':'volunteer','Date':'WRONG DATE','Certificate Number':'WRONG NUMBER',
-            'Printed Name':name,'Attend Date':date,'Cert No':number} for name,date,number in people]+
+            'Printed Name':name,'Attend Date':datetime.fromisoformat(date),'Cert No':number} for name,date,number in people]+
             [{'Participant Name':'Example Donor','Type':'donor'},{'Participant Name':'Example Family','Type':'beneficiary'}])
         w.load_table('Records');w.cfg.update(engine='libreoffice',soffice=os.environ['FOODBANK_TEST_SOFFICE'],auto_pdf=True)
         w.cfg['mapping'][w.mapping_key()]={'name':'Printed Name','date':'Attend Date','cert_no':'Cert No'}
@@ -137,6 +138,7 @@ class DesktopTests(unittest.TestCase):
             import subprocess
             extracted=subprocess.check_output(['pdftotext',entry['pdf'],'-'],text=True)
             for value in expected:self.assertIn(value,extracted)
+            self.assertNotIn('T00:00:00',extracted)
             for value in ('July 18, 2026','26/06/3705','WRONG DATE','WRONG NUMBER','Unmapped Name'):
                 self.assertNotIn(value,extracted)
             for other in people:
@@ -170,6 +172,23 @@ class DesktopTests(unittest.TestCase):
         mapping=main.MappingDialog(['Name','Attend Date','Cert No'],{},self.window)
         self.assertEqual(mapping.value()['date'],'Attend Date')
         self.assertEqual(mapping.value()['cert_no'],'Cert No');mapping.close()
+
+    def test_date_display_and_invalid_number_do_not_rewrite_excel(self):
+        w=self.window;headers,_=w.store.table('Records')
+        source_date=datetime(2026,11,20);wrong_number=datetime(3705,6,26)
+        w.store.save_rows('Records',headers,[{'Participant Name':'Alice','Type':'volunteer',
+            'Date':source_date,'Certificate Number':wrong_number}])
+        w.load_table('Records');rec=w.record(w.rows[0])
+        self.assertEqual(rec['date'],'2026-11-20');self.assertTrue(rec['cert_no_is_date'])
+        self.assertEqual(rec['cert_no'],'')
+        self.assertEqual(w.table.item(0,w.headers.index('Date')).text(),'2026-11-20')
+        self.assertNotIn('T00:00:00',w.table.item(0,w.headers.index('Certificate Number')).text())
+        w.table.item(0,w.headers.index('Phone')).setText('0123456789');self.assertTrue(w.save())
+        row=w.store.table('Records')[1][0]
+        self.assertEqual(row['Date'],source_date);self.assertEqual(row['Certificate Number'],wrong_number)
+        w.table.item(0,w.headers.index('Certificate Number')).setText('26/06/3705');self.assertTrue(w.save())
+        rec=w.record(w.rows[0]);self.assertEqual(rec['cert_no'],'26/06/3705')
+        self.assertFalse(rec.get('cert_no_is_date',False))
     def test_sync_callback_no_duplicate(self):
         w=self.window
         cfg={'sources':[{'destination':'Google Volunteers'}]};w.cfg['google']=cfg

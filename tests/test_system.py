@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from datetime import date, datetime
 from unittest.mock import patch
 from openpyxl import Workbook,load_workbook
 from pptx import Presentation
@@ -80,6 +81,21 @@ class CertificateTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);self.path=self.root/'template.pptx';template(self.path)
     def tearDown(self):self.temp.cleanup()
+    def test_attendance_dates_omit_time_but_literal_numbers_stay_exact(self):
+        for value in (datetime(2026,11,20),datetime(2026,11,20,14,30),date(2026,11,20),
+                      '2026-11-20T00:00:00','2026-11-20 14:30:00'):
+            self.assertEqual(cert.attendance_text(value),'2026-11-20')
+        for number in ('0007','26/06/3705','REF-T00:00:00'):
+            self.assertEqual(cert.certificate_values({'cert_no':number})['cert_no'],number)
+        self.assertEqual(cert.attendance_text('20 November 2026'),'20 November 2026')
+
+    def test_excel_date_certificate_number_requires_reentry(self):
+        rec={'id':'abc','name':'Alice','type':'volunteer','date':datetime(2026,11,20),
+             'cert_no':datetime(3705,6,26)}
+        with patch('certificates.convert_pdf') as converter:
+            result=cert.generate_one(rec,{},self.root)
+            self.assertIn('stored as an Excel date',result['status']);converter.assert_not_called()
+        self.assertEqual(rec['cert_no'],datetime(3705,6,26))
     def test_split_runs_and_keep_prefix(self):
         out=self.root/'out.pptx';self.assertEqual(cert.fill_template(self.path,out,{'NAME':'王小明','DATE':'2026-11-02'}),1)
         p=Presentation(out);para=p.slides[0].shapes[0].text_frame.paragraphs[0]
@@ -163,12 +179,13 @@ class CertificateTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get('FOODBANK_TEST_SOFFICE'),'Set FOODBANK_TEST_SOFFICE for real PDF integration')
     def test_real_pdf(self):
         p=Presentation();slide=p.slides.add_slide(p.slide_layouts[6]);slide.shapes.add_textbox(0,0, Inches(9), Inches(2)).text='Name / Date No / Cert No';p.save(self.path)
-        rec={'id':'abc','name':'Alice Example','type':'volunteer','date':'2026-11-02','cert_no':'FB-0001'}
+        rec={'id':'abc','name':'Alice Example','type':'volunteer','date':datetime(2026,11,2),'cert_no':'FB-0001'}
         result=cert.generate_one(rec,{'volunteer':{'path':str(self.path)}},self.root/'pdf',engine='libreoffice',soffice=os.environ['FOODBANK_TEST_SOFFICE'])
         self.assertTrue(Path(result['pdf']).read_bytes().startswith(b'%PDF-'))
         import subprocess
         extracted=subprocess.check_output(['pdftotext',result['pdf'],'-'],text=True)
         self.assertIn('Alice Example',extracted);self.assertIn('2026-11-02',extracted);self.assertIn('FB-0001',extracted);self.assertNotIn('Cert No',extracted);self.assertNotIn('Date No',extracted)
+        self.assertNotIn('T00:00:00',extracted)
 
 
 class FakeService:

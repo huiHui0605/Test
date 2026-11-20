@@ -2,7 +2,14 @@
 
 Validated 2026-11-20 on Debian 13, Python 3.12, PySide6 6.12, openpyxl 3.1.5, python-pptx 1.0.2, google-auth-oauthlib 1.5.0, keyring 25.7.0 and LibreOffice Impress 25.2.3.2.
 
-Starting revision for the certificate fix: `58f56e1caf3f2d5c15f3408cae58c48d7a8ebeaa` on `huiHui0605/Test/main`. The remote was fetched and checked before implementation. The original `Foodbank-System` repository was not modified.
+Starting revision for the attendance-format follow-up: `2f30ab566e06ff4d9442a6ad218f319a0e3e3950` on `huiHui0605/Test/main`. The remote was fetched and checked before implementation. The original `Foodbank-System` repository was not modified.
+
+## Attendance date/time formatting follow-up
+
+- Attendance values loaded as Excel datetime objects or ISO datetime strings now display/export only their date. The generic storage serialization and unrelated timestamps are unchanged.
+- Certificate numbers stored as text remain exact, including leading zeros and slashes. Date-typed numbers block generation with instructions to re-enter the intended identifier as text; no attempt is made to guess the original identifier.
+- The real three-person desktop PDF test now starts with native Excel datetime cells, checks each date/number, and rejects the `T00:00:00` suffix. The standalone real PDF test also uses a datetime object.
+- New tests cover date/date-time formatting, preservation of literal identifiers, date-typed number rejection, table display, unchanged native source cells after editing another field, and correction of a number through the local table editor.
 
 ## Per-person certificate regression
 
@@ -16,7 +23,7 @@ The bundled production PPTX had editable `Name` but literal `July 18, 2026` and 
 
 ## Automated result
 
-**82 tests passed, 0 failed, 0 skipped**, including real LibreOffice conversion.
+**85 tests passed, 0 failed, 0 skipped**, including real LibreOffice conversion.
 
 ```bash
 QT_QPA_PLATFORM=offscreen XDG_CACHE_HOME=/workspace/work/cache \
