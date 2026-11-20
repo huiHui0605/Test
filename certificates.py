@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 from datetime import date, datetime
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
 from pptx import Presentation
@@ -166,11 +167,84 @@ def convert_pdf(pptx, output, engine='auto', soffice=''):
         raise RuntimeError('Converter did not produce a valid PDF.')
 
 
+@lru_cache(maxsize=1024)
+def _file_digest(path, modified, changed, size):
+    with open(path, 'rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def file_digest(path):
+    path=Path(path).resolve();stat=path.stat()
+    return _file_digest(str(path),stat.st_mtime_ns,stat.st_ctime_ns,stat.st_size)
+
+
 def certificate_signature(record, template, marker, engine):
     record=certificate_values(record)
     fields={k:str(record.get(k,'')) for k in ('id','name','type','date','cert_no')}
-    fields.update(replacement_version=4,template=hashlib.sha256(Path(template).read_bytes()).hexdigest(),marker=marker,engine=engine)
+    fields.update(replacement_version=4,template=file_digest(template),marker=marker,engine=engine)
     return hashlib.sha256(json.dumps(fields,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+
+
+def certificate_path(record, output_dir):
+    label=re.sub(r'[^\w\-]+','_',str(record['name']),flags=re.U)[:55] or 'participant'
+    token=hashlib.sha256(str(record['id']).encode()).hexdigest()[:16]
+    return Path(output_dir)/kind(record.get('type'))/f'{label}_{token}.pdf'
+
+
+def write_pdf_receipt(record, entry):
+    """Keep identity/version evidence next to the PDF, independent of the UI index."""
+    pdf=Path(entry['pdf']);receipt=pdf.with_suffix('.pdf.json')
+    payload={'record_id':str(record['id']),'signature':entry['signature'],'sha256':entry['sha256']}
+    try:
+        if json.loads(receipt.read_text(encoding='utf-8'))==payload:return
+    except (OSError,ValueError):
+        pass
+    fd,staging=tempfile.mkstemp(prefix='.receipt-',suffix='.json',dir=pdf.parent)
+    try:
+        with os.fdopen(fd,'w',encoding='utf-8') as stream:
+            json.dump(payload,stream,sort_keys=True)
+        os.replace(staging,receipt)
+    finally:
+        Path(staging).unlink(missing_ok=True)
+
+
+def existing_certificate(record, templates, output_dir, previous=None, engine='auto'):
+    """Find this row's current PDF; never associate files by name alone."""
+    record=certificate_values(record);previous=previous or {}
+    if kind(record.get('type'))!='volunteer' or record.get('cert_no_is_date'):
+        return None
+    if any(not str(record.get(key,'')).strip() for key in ('id','name','date','cert_no')):
+        return None
+    cfg=templates.get('volunteer',{})
+    try:
+        signature=certificate_signature(record,cfg.get('path',''),cfg.get('marker','Name') or 'Name',engine)
+    except (OSError,ValueError):
+        return None
+    target=certificate_path(record,output_dir).resolve()
+    candidates=[target]
+    if previous.get('pdf'):
+        old=Path(previous['pdf']).resolve()
+        if old.parent==target.parent and old not in candidates:candidates.append(old)
+    for pdf in candidates:
+        try:
+            with pdf.open('rb') as stream:
+                if stream.read(5)!=b'%PDF-':continue
+            digest=file_digest(pdf)
+            evidence=[]
+            if previous.get('pdf') and Path(previous['pdf']).resolve()==pdf:
+                evidence.append(previous)
+            try:
+                receipt=json.loads(pdf.with_suffix('.pdf.json').read_text(encoding='utf-8'))
+                if isinstance(receipt,dict) and receipt.get('record_id')==str(record['id']) and receipt.get('sha256'):
+                    evidence.append(receipt)
+            except (OSError,ValueError):
+                pass
+            for entry in evidence:
+                if entry.get('signature')==signature and entry.get('sha256',digest)==digest:
+                    return {'status':'PDF ready','pdf':str(pdf),'signature':signature,'sha256':digest}
+        except (OSError,ValueError):
+            continue
+    return None
 
 
 def generate_one(record, templates, output_dir, previous=None, engine='auto', soffice=''):
@@ -192,12 +266,12 @@ def generate_one(record, templates, output_dir, previous=None, engine='auto', so
         if not str(record.get(key,'')).strip():
             return {'status':label+' required: select its column and fill in the value'}
     sig=certificate_signature(record,template,marker,engine)
-    previous=previous or {}
-    if previous.get('signature')==sig and Path(previous.get('pdf','')).is_file(): return previous
+    existing=existing_certificate(record,templates,output_dir,previous,engine)
+    if existing:
+        write_pdf_receipt(record,existing)
+        return existing
     folder=Path(output_dir)/k;folder.mkdir(parents=True,exist_ok=True)
-    label=re.sub(r'[^\w\-]+','_',str(record['name']),flags=re.U)[:55] or 'participant'
-    token=hashlib.sha256(str(record['id']).encode()).hexdigest()[:16]
-    dest=folder/f'{label}_{token}.pdf'
+    dest=certificate_path(record,output_dir)
     with tempfile.TemporaryDirectory() as temp:
         pptx=Path(temp)/'certificate.pptx';pdf=Path(temp)/'certificate.pdf'
         fill_template(template,pptx,{'NAME':str(record['name']),'TYPE':k.title(),'DATE':str(record.get('date','')),'ID':str(record['id']),'CERT_NO':str(record.get('cert_no',''))},marker)
@@ -207,7 +281,9 @@ def generate_one(record, templates, output_dir, previous=None, engine='auto', so
             shutil.copy2(pdf,staging);os.replace(staging,dest)
         finally:
             Path(staging).unlink(missing_ok=True)
-    return {'status':'PDF ready','pdf':str(dest.resolve()),'signature':sig}
+    entry={'status':'PDF ready','pdf':str(dest.resolve()),'signature':sig,'sha256':file_digest(dest)}
+    write_pdf_receipt(record,entry)
+    return entry
 
 
 def whatsapp_url(phone, name, country='60'):

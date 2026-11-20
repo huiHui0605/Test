@@ -205,6 +205,48 @@ class DesktopTests(unittest.TestCase):
         with patch('main.generate_one',return_value={'status':'PDF ready','pdf':'fake','signature':'s'}) as generate:
             w.auto_generate();pump(150)
             self.assertEqual(generate.call_count,1);self.assertEqual(generate.call_args.args[0]['name'],'Volunteer');self.assertFalse(w.busy_pdf)
+
+    def test_pdf_folder_status_recovery_delete_restore_and_no_duplicate(self):
+        from certificates import generate_one
+        w=self.window;headers,_=w.store.table('Records')
+        w.store.save_rows('Records',headers,[{'Participant Name':name,'Type':'volunteer','Date':day,'Certificate Number':number}
+            for name,day,number in [('Alice','2026-11-20','0007'),('Alice','2026-11-21','0008')]])
+        w.load_table('Records')
+        self.assertIn('Check PDF Folder',[a.text() for a in w.actions_menu.actions()])
+        def status(row):return w.table.item(row,len(w.headers)).text()
+        self.assertEqual(status(0),'PDF not ready');self.assertEqual(status(1),'PDF not ready')
+        with patch('certificates.convert_pdf',side_effect=lambda _,out,*args:Path(out).write_bytes(b'%PDF-1.4 test')) as converter:
+            first=generate_one(w.record(w.rows[0]),w.cfg['templates'],self.root/'certificates')
+            pdf=Path(first['pdf']);contents=pdf.read_bytes();stamp=pdf.stat().st_mtime_ns
+            # No UI cache entry: recover the row from its actual file/receipt.
+            w.watch();self.assertEqual(status(0),'PDF ready');self.assertEqual(status(1),'PDF not ready')
+            pdf.unlink();w.watch();self.assertEqual(status(0),'PDF not ready')
+            pdf.write_bytes(contents);w.check_pdf_folder();self.assertEqual(status(0),'PDF ready')
+            stamp=pdf.stat().st_mtime_ns
+            with patch.object(w,'submit',side_effect=lambda fn,complete,failed:complete(fn())):
+                w.manual_pdf();w.manual_pdf()
+            self.assertEqual(converter.call_count,2);self.assertEqual(pdf.stat().st_mtime_ns,stamp)
+            self.assertEqual(status(0),'PDF ready');self.assertEqual(status(1),'PDF ready')
+        # A stale cache must never leave a removed PDF ready or share its path.
+        pdf.unlink();w.watch()
+        with patch('main.webbrowser.open'),patch('main.QDesktopServices.openUrl') as folder:
+            w.share(0);folder.assert_not_called()
+        w.cache={};w.load_table('Records')
+        self.assertEqual(status(0),'PDF not ready');self.assertEqual(status(1),'PDF ready')
+
+    def test_pdf_scan_preserves_edit_and_explains_generation_error(self):
+        from certificates import generate_one
+        w=self.window;headers,_=w.store.table('Records')
+        w.store.save_rows('Records',headers,[{'Participant Name':'Alice','Type':'volunteer','Date':'2026-11-20','Certificate Number':'0007'}]);w.load_table('Records')
+        with patch('certificates.convert_pdf',side_effect=lambda _,out,*args:Path(out).write_bytes(b'%PDF-1.4 test')):
+            generate_one(w.record(w.rows[0]),w.cfg['templates'],self.root/'certificates')
+        w.check_pdf_folder();w.autosave.setChecked(False)
+        item=w.table.item(0,w.headers.index('Certificate Number'));item.setText('0008');w.check_pdf_folder()
+        self.assertIs(w.table.item(0,w.headers.index('Certificate Number')),item)
+        self.assertEqual(item.text(),'0008');self.assertTrue(w.dirty)
+        status=w.table.item(0,len(w.headers));self.assertEqual(status.text(),'PDF not ready')
+        key=w.cache_key(w.record(w.rows[0])['id']);w.cache[key]={'status':'Certificate number required'}
+        w.check_pdf_folder();self.assertEqual(status.text(),'PDF not ready');self.assertIn('Certificate number required',status.toolTip())
     def test_certificate_columns_persist_and_retired_donors_stay_in_excel(self):
         w=self.window;h,_=w.store.table('Records');h+=['Printed Name','Event Day','Reference']
         w.store.save_rows('Records',h,[{'Participant Name':'Volunteer','Type':'volunteer','Printed Name':'Alice','Event Day':'2026-12-01','Reference':'0007'},{'Participant Name':'Historical Donor','Type':'donor'}])

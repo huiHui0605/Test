@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBo
     QMessageBox,QDialog,QFormLayout,QDialogButtonBox,QCheckBox,QSpinBox,QTabWidget,
     QAbstractItemView,QInputDialog,QStyledItemDelegate,QMenu,QStyle,QTabBar,QPlainTextEdit)
 from storage import ExcelStore, ConflictError, text
-from certificates import kind, markers, validate_template, generate_one, certificate_signature, certificate_values, attendance_text, whatsapp_url
+from certificates import kind, markers, validate_template, generate_one, existing_certificate, certificate_values, attendance_text, whatsapp_url
 from google_sync import fetch_account as fetch
 from google_account import GoogleAccount
 from google_dialog import GoogleDialog
@@ -194,7 +194,7 @@ class Window(QMainWindow):
         toolbar.addStretch()
         more=QPushButton('More Actions');more.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogListView))
         self.actions_menu=QMenu(more)
-        for label,fn in [('Save Changes',self.save),('Reload Excel',self.reload),('Generate / Retry PDFs',self.manual_pdf),('Open PDF Folder',self.open_output)]:
+        for label,fn in [('Save Changes',self.save),('Reload Excel',self.reload),('Check PDF Folder',self.check_pdf_folder),('Generate / Retry PDFs',self.manual_pdf),('Open PDF Folder',self.open_output)]:
             self.actions_menu.addAction(label,fn)
         self.actions_menu.addSeparator();self.actions_menu.addAction('Delete Selected Rows',self.delete_rows)
         more.setMenu(self.actions_menu);toolbar.addWidget(more)
@@ -332,10 +332,13 @@ class Window(QMainWindow):
                 self.table.setItem(ui,c,item)
             rec=self.record(row);entry=self.cache.get(self.cache_key(rec['id']),{})
             status='No certificate required' if rec['type']=='beneficiary' else entry.get('status','Pending' if rec['type'] else 'Select a type / column mapping')
+            if self.active_workflow==0:
+                entry=self.certificate_entry(rec);status=entry['status']
             if self.active_workflow==FAMILY_TAB:status='Sending email...' if self.cache_key(rec['id']) in self.email_busy else self.email_journal.label(self.cache_key(rec['id']))
             elif self.active_workflow==ACTIVITY_TAB:status='Ready to share activity details'
-            if self.dirty and rec['type'] in ('volunteer',):status='Unsaved'
+            if self.dirty and self.active_workflow!=0 and rec['type'] in ('volunteer',):status='Unsaved'
             item=QTableWidgetItem(status);item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable);self.table.setItem(ui,len(self.headers),item)
+            if self.active_workflow==0:item.setToolTip(entry.get('reason',entry.get('pdf','')))
             button=QPushButton('Review & Email' if self.active_workflow==FAMILY_TAB else 'WhatsApp Share')
             button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
             button.setToolTip('Review the recipient, message and PDF before sending email.' if self.active_workflow==FAMILY_TAB else 'Review and send manually in WhatsApp.')
@@ -607,6 +610,46 @@ class Window(QMainWindow):
                 if self.dirty:self.save_timer.stop();self.say('Excel changed outside the app. Copy your unsaved edits, then reload to resolve the conflict.')
                 else:self.store.reload();self.load_table(self.sheet);self.auto_generate()
         except Exception as e:self.say('Could not monitor Excel: '+str(e))
+        self.check_pdf_folder(quiet=True)
+    def certificate_entry(self,rec):
+        if rec['type']!='volunteer':
+            return {'status':'PDF not ready','reason':'Select a volunteer type and configure the source columns.'}
+        previous=self.cache.get(self.cache_key(rec['id']),{})
+        ready=existing_certificate(rec,self.cfg['templates'],DATA/'certificates',previous,self.cfg.get('engine','auto'))
+        if ready:return ready
+        reason=previous.get('reason','')
+        if previous.get('status') not in (None,'PDF ready','PDF not ready'):
+            reason=previous['status']
+        if not reason:reason='No matching current PDF in the PDF folder. Save changes and use Generate / Retry PDFs.'
+        return {**previous,'status':'PDF not ready','reason':reason}
+    def check_pdf_folder(self,checked=False,quiet=False):
+        if self.busy_pdf:
+            if not quiet:self.say('PDF generation is running. Folder status will refresh when it finishes.')
+            return
+        changed=False;entries={}
+        for i,row in enumerate(self.rows):
+            rec=self.record(row)
+            if rec['type']!='volunteer':continue
+            entry=self.certificate_entry(rec);entries[i]=entry
+            if rec['id']:
+                key=self.cache_key(rec['id'])
+                if self.cache.get(key)!=entry:self.cache[key]=entry;changed=True
+        if changed:
+            try:write_json(self.cache_path,self.cache)
+            except OSError as error:self.say('Could not save PDF folder status: '+str(error))
+        if self.active_workflow==0:
+            # Update only status cells: do not rebuild the table during editing.
+            blocked=self.table.blockSignals(True)
+            try:
+                for ui,index in enumerate(self.visible):
+                    if index not in entries:continue
+                    item=self.table.item(ui,len(self.headers));entry=entries[index]
+                    if item:
+                        item.setText(entry['status']);item.setToolTip(entry.get('reason',entry.get('pdf','')))
+            finally:self.table.blockSignals(blocked)
+        if not quiet:
+            ready=sum(entry['status']=='PDF ready' for entry in entries.values())
+            self.say(f'PDF folder checked: {ready} PDF ready, {len(entries)-ready} PDF not ready. Hover over a status for details.')
     def share(self,index):
         original=self.rows[index] if index<len(self.rows) else None
         if original is None:return
@@ -618,12 +661,9 @@ class Window(QMainWindow):
         if index>=len(self.rows):return
         if self.active_workflow in (FAMILY_TAB,ACTIVITY_TAB):
             self.share_application(index);return
-        rec=self.record(self.rows[index]);entry=self.cache.get(self.cache_key(rec['id']),{})
-        current=False
+        rec=self.record(self.rows[index]);entry=self.certificate_entry(rec)
+        current=entry['status']=='PDF ready'
         if rec['type'] in ('volunteer',):
-            cfg=self.cfg['templates'].get(rec['type'],{})
-            try:current=entry.get('signature')==certificate_signature(rec,cfg['path'],cfg.get('marker','Name'),self.cfg.get('engine','auto')) and Path(entry.get('pdf','')).is_file()
-            except (KeyError,OSError):pass
             if current:
                 QApplication.clipboard().setText(entry['pdf'])
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(entry['pdf']).parent)))

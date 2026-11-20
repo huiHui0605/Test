@@ -117,6 +117,60 @@ class CertificateTests(unittest.TestCase):
             first=cert.generate_one(rec,cfg,self.root/'output');second=cert.generate_one(rec,cfg,self.root/'output',first)
             self.assertEqual(mock.call_count,1);self.assertEqual(first,second)
             rec['name']='Bob';third=cert.generate_one(rec,cfg,self.root/'output',first);self.assertEqual(mock.call_count,2);self.assertNotEqual(first['signature'],third['signature'])
+
+    def folder_fixture(self):
+        prs=Presentation(self.path);prs.slides[0].shapes[0].text_frame.paragraphs[0].add_run().text=' / Cert No';prs.save(self.path)
+        return {'id':'abc','name':'Alice','type':'volunteer','date':'2026-11-20','cert_no':'0007'},{'volunteer':{'path':str(self.path)}}
+
+    def test_folder_recovers_without_index_and_skips_conversion(self):
+        rec,cfg=self.folder_fixture()
+        with patch('certificates.convert_pdf',side_effect=lambda _,out,*args:Path(out).write_bytes(b'%PDF-1.4 mock')) as convert:
+            first=cert.generate_one(rec,cfg,self.root/'output');pdf=Path(first['pdf']);stamp=pdf.stat().st_mtime_ns
+            recovered=cert.existing_certificate(rec,cfg,self.root/'output')
+            self.assertEqual(recovered,first)
+            self.assertEqual(cert.generate_one(rec,cfg,self.root/'output'),first)
+            convert.assert_called_once();self.assertEqual(pdf.stat().st_mtime_ns,stamp)
+
+    def test_folder_deletion_restoration_and_corruption(self):
+        rec,cfg=self.folder_fixture()
+        with patch('certificates.convert_pdf',side_effect=lambda _,out,*args:Path(out).write_bytes(b'%PDF-1.4 mock')) as convert:
+            entry=cert.generate_one(rec,cfg,self.root);pdf=Path(entry['pdf']);original=pdf.read_bytes()
+            pdf.unlink();self.assertIsNone(cert.existing_certificate(rec,cfg,self.root,entry))
+            pdf.write_bytes(original);self.assertEqual(cert.existing_certificate(rec,cfg,self.root,entry),entry)
+            pdf.write_bytes(b'%PDF-1.4 WRONG PERSON')
+            self.assertIsNone(cert.existing_certificate(rec,cfg,self.root,entry))
+            self.assertIsNone(cert.existing_certificate(rec,cfg,self.root))
+            cert.generate_one(rec,cfg,self.root,entry);self.assertEqual(convert.call_count,2)
+            pdf.write_bytes(b'');self.assertIsNone(cert.existing_certificate(rec,cfg,self.root,entry))
+
+    def test_folder_rejects_stale_record_template_and_other_person(self):
+        rec,cfg=self.folder_fixture()
+        with patch('certificates.convert_pdf',side_effect=lambda _,out,*args:Path(out).write_bytes(b'%PDF-1.4 mock')):
+            entry=cert.generate_one(rec,cfg,self.root)
+        for field,value in [('name','Bob'),('date','2026-11-21'),('cert_no','0008'),('id','another-person')]:
+            with self.subTest(field=field):
+                self.assertIsNone(cert.existing_certificate({**rec,field:value},cfg,self.root,entry))
+        prs=Presentation(self.path);prs.slides[0].shapes[0].text_frame.paragraphs[0].add_run().text=' New design';prs.save(self.path)
+        self.assertIsNone(cert.existing_certificate(rec,cfg,self.root,entry))
+
+    def test_legacy_index_and_unknown_pdf(self):
+        rec,cfg=self.folder_fixture()
+        pdf=cert.certificate_path(rec,self.root);pdf.parent.mkdir();pdf.write_bytes(b'%PDF-1.4 legacy')
+        self.assertIsNone(cert.existing_certificate(rec,cfg,self.root))
+        legacy={'status':'PDF ready','pdf':str(pdf),'signature':cert.certificate_signature(rec,self.path,'Name','auto')}
+        with patch('certificates.convert_pdf') as convert:
+            ready=cert.generate_one(rec,cfg,self.root,legacy);convert.assert_not_called()
+        self.assertEqual(ready['status'],'PDF ready')
+        self.assertEqual(cert.existing_certificate(rec,cfg,self.root),ready)
+
+    def test_receipt_recovers_after_folder_move(self):
+        import shutil
+        rec,cfg=self.folder_fixture()
+        with patch('certificates.convert_pdf',side_effect=lambda _,out,*args:Path(out).write_bytes(b'%PDF-1.4 mock')):
+            entry=cert.generate_one(rec,cfg,self.root/'before')
+        shutil.move(self.root/'before',self.root/'after')
+        ready=cert.existing_certificate(rec,cfg,self.root/'after',entry)
+        self.assertEqual(ready['status'],'PDF ready');self.assertIn('/after/',ready['pdf'])
     def test_beneficiary_and_missing_template(self):
         self.assertEqual(cert.generate_one({'type':'beneficiary'},{},self.root)['status'],'Not applicable')
         self.assertIn('template required',cert.generate_one({'type':'volunteer','name':'A'},{},self.root)['status'])

@@ -2,7 +2,15 @@
 
 Validated 2026-11-20 on Debian 13, Python 3.12, PySide6 6.12, openpyxl 3.1.5, python-pptx 1.0.2, google-auth-oauthlib 1.5.0, keyring 25.7.0 and LibreOffice Impress 25.2.3.2.
 
-Starting revision for the attendance-format follow-up: `2f30ab566e06ff4d9442a6ad218f319a0e3e3950` on `huiHui0605/Test/main`. The remote was fetched and checked before implementation. The original `Foodbank-System` repository was not modified.
+Starting revision for PDF folder detection: `7f7ec9b050ef2e6e026428bffc83fd2a5da13b3d` on `huiHui0605/Test/main`. The remote was fetched and checked before implementation. The original `Foodbank-System` repository was not modified.
+
+## PDF folder detection and reuse
+
+- Generation and manual sharing check the actual file, record/template signature and available PDF checksum. Matching PDFs are skipped without conversion or PDF modification; missing, changed or outdated files are not marked ready.
+- New `.pdf.json` receipts support recovery without the central UI index and after moving the complete output folder. Existing matching legacy index entries remain supported; unknown files are never associated by name alone.
+- Certificate cells now show `PDF ready` / `PDF not ready`, with details in their tooltip. The existing 2.5-second monitor and new Check PDF Folder action refresh the current worksheet even with auto-generation disabled, updating only status cells during editing.
+- Added seven tests covering cacheless recovery and unchanged PDF mtime, deletion/restoration, altered/empty files, changes to record/template, same-name different-ID records, legacy adoption, unknown PDFs, folder relocation, repeat manual generation, missing-file sharing, recovery after table reload, and preserving unsaved edits/error explanations.
+- The full suite still includes real LibreOffice PDF generation for multiple rows, including datetime formatting and independent names/dates/numbers. New corruption and conversion-count scenarios use local fake converter output; no real messaging occurs.
 
 ## Attendance date/time formatting follow-up
 
@@ -23,7 +31,7 @@ The bundled production PPTX had editable `Name` but literal `July 18, 2026` and 
 
 ## Automated result
 
-**85 tests passed, 0 failed, 0 skipped**, including real LibreOffice conversion.
+**92 tests passed, 0 failed, 0 skipped**, including real LibreOffice conversion.
 
 ```bash
 QT_QPA_PLATFORM=offscreen XDG_CACHE_HOME=/workspace/work/cache \
