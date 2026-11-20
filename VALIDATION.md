@@ -1,12 +1,22 @@
 # Validation
 
-Validated 2026-11-16 on Debian 13, Python 3.12, PySide6 6.12, openpyxl 3.1.5, python-pptx 1.0.2, google-auth-oauthlib 1.5.0, keyring 25.7.0 and LibreOffice Impress 25.2.3.2.
+Validated 2026-11-20 on Debian 13, Python 3.12, PySide6 6.12, openpyxl 3.1.5, python-pptx 1.0.2, google-auth-oauthlib 1.5.0, keyring 25.7.0 and LibreOffice Impress 25.2.3.2.
 
-Starting revision: `bf8a9a85fb6b3ce1a416ccdfbd3ca66a7d8ef390` on `huiHui0605/Test/main`. The remote was checked before implementation. The original `Foodbank-System` repository was not modified.
+Starting revision for the certificate fix: `58f56e1caf3f2d5c15f3408cae58c48d7a8ebeaa` on `huiHui0605/Test/main`. The remote was fetched and checked before implementation. The original `Foodbank-System` repository was not modified.
+
+## Per-person certificate regression
+
+The bundled production PPTX had editable `Name` but literal `July 18, 2026` and `26/06/3705`. The row mapping was already per-person; those two literal template values were never replaced. Earlier PDF tests checked the bundled template's name only, while date/number tests used a synthetic template, so they did not catch this asset defect.
+
+- Changed only those two text values to `Date No` and `Cert No`. ZIP-entry comparison confirms only `ppt/slides/slide1.xml` changed; all other original template assets are byte-identical.
+- Template settings and generation now reject a missing name/date/number marker. Missing-marker checks run before cache reuse; cached PDF signatures were versioned to regenerate older output.
+- The real desktop background test now exports three rows using the bundled template, custom column mappings, deliberately incorrect unselected columns, distinct dates/numbers, and two people with the same name. Extracted PDF text matches each row's three values, excludes the other rows' dates/numbers and old literal values, and three distinct files exist.
+- Added missing-marker/cache rejection, template-dialog validation, `Attend Date` column recognition, and two-person bundled-template replacement tests. Leading-zero numbers remain intact.
+- Separately generated fictitious Alice/Bob PDFs, extracted their dates/numbers, and visually inspected Alice's rendered certificate. The existing design and field positions remain intact. Windows PowerPoint rendering still requires target-computer verification.
 
 ## Automated result
 
-**78 tests passed, 0 failed, 0 skipped**, including real LibreOffice conversion.
+**82 tests passed, 0 failed, 0 skipped**, including real LibreOffice conversion.
 
 ```bash
 QT_QPA_PLATFORM=offscreen XDG_CACHE_HOME=/workspace/work/cache \
@@ -41,7 +51,7 @@ Also checked: Python compilation, `git diff --check`, allowlisted ZIP integrity 
 - Interrupted attempts remain uncertain after reopening the journal. The app does not claim Gmail exactly-once delivery and requires a human Sent-mail check before resending.
 - A deliberately waiting background Google task leaves the Qt event loop responsive. Disconnect removes the mocked authorization and disables the sync timer while retaining Excel history.
 
-Some former family-WhatsApp/global-date tests were updated for the explicitly requested email/per-person-date behavior; the original storage and certificate tests remain intact. Google and Gmail calls are mocked; browser/desktop-share calls are intercepted in automated tests. No real email or WhatsApp message was sent.
+Some former family-WhatsApp/global-date tests were updated for the explicitly requested email/per-person-date behavior; certificate tests now also enforce all three required per-person fields on the bundled template. Google and Gmail calls are mocked; browser/desktop-share calls are intercepted in automated tests. No real email or WhatsApp message was sent.
 
 ## Visual and document review
 

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBo
     QMessageBox,QDialog,QFormLayout,QDialogButtonBox,QCheckBox,QSpinBox,QTabWidget,
     QAbstractItemView,QInputDialog,QStyledItemDelegate,QMenu,QStyle,QTabBar,QPlainTextEdit)
 from storage import ExcelStore, ConflictError, text
-from certificates import kind, markers, generate_one, certificate_signature, whatsapp_url
+from certificates import kind, markers, validate_template, generate_one, certificate_signature, whatsapp_url
 from google_sync import fetch_account as fetch
 from google_account import GoogleAccount
 from google_dialog import GoogleDialog
@@ -31,7 +31,7 @@ ALIASES={'name':['participantname','name','fullname','姓名','名字','namapenu
          'email':['email','emailaddress','邮箱','电子邮箱'],
          'activity_date':[],
          'phone':['phone','phonenumber','contactnumber','whatsapp','电话','telefon'],
-         'date':['attendancedate','dateno','date','日期','出席日期','tarikh'],
+         'date':['attendancedate','attenddate','dateofservice','dateno','date','日期','出席日期','tarikh'],
          'cert_no':['certificatenumber','certificateno','certno','感谢状编号']}
 
 
@@ -137,7 +137,7 @@ class TemplateDialog(QDialog):
     def validate(self):
         for k,box in self.paths.items():
             if box.text().strip():
-                try:markers(box.text().strip())
+                try:validate_template(box.text().strip(), self.tokens[k].text().strip() or 'Name')
                 except Exception as e:
                     QMessageBox.warning(self,'Invalid Template',str(e));return
         self.accept()

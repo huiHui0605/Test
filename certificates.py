@@ -81,6 +81,19 @@ def field_patterns(name_marker='auto'):
     }
 
 
+def validate_template(template, name_marker='auto'):
+    """Require all per-person fields before exporting or reusing a PDF."""
+    texts = [''.join(r.text for r in p.runs)
+             for p in all_paragraphs(Presentation(str(template)))]
+    patterns = field_patterns(name_marker)
+    for key, label in [('NAME', 'Name'), ('DATE', 'Date No'), ('CERT_NO', 'Cert No')]:
+        if not any(re.search(patterns[key], value, re.I) for value in texts):
+            raise ValueError(
+                f'Template missing {label} marker: replace the fixed sample value '
+                f'with editable {label} text (or configure the exact name marker). '
+                'Each certificate needs name, attendance date and certificate number markers.')
+
+
 def fill_template(template, output, values, name_marker='auto'):
     prs=Presentation(str(template));count=0
     # One pass over original text: values that contain marker-like text stay literal.
@@ -128,7 +141,7 @@ def convert_pdf(pptx, output, engine='auto', soffice=''):
 
 def certificate_signature(record, template, marker, engine):
     fields={k:str(record.get(k,'')) for k in ('id','name','type','date','cert_no')}
-    fields.update(replacement_version=2,template=hashlib.sha256(Path(template).read_bytes()).hexdigest(),marker=marker,engine=engine)
+    fields.update(replacement_version=3,template=hashlib.sha256(Path(template).read_bytes()).hexdigest(),marker=marker,engine=engine)
     return hashlib.sha256(json.dumps(fields,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
@@ -139,11 +152,14 @@ def generate_one(record, templates, output_dir, previous=None, engine='auto', so
     cfg=templates.get(k,{})
     template=Path(cfg.get('path',''))
     if not template.is_file(): return {'status':f'{k.title()} template required'}
-    template_text='\n'.join(p.text for p in all_paragraphs(Presentation(str(template))))
-    for field,label,key in [('DATE','Attendance date','date'),('CERT_NO','Certificate number','cert_no')]:
-        if re.search(field_patterns()[field],template_text,re.I) and not str(record.get(key,'')).strip():
-            return {'status':label+' required: select its column and fill in the value'}
     marker=cfg.get('marker','Name') or 'Name'
+    try:
+        validate_template(template, marker)
+    except ValueError as error:
+        return {'status':str(error)}
+    for field,label,key in [('DATE','Attendance date','date'),('CERT_NO','Certificate number','cert_no')]:
+        if not str(record.get(key,'')).strip():
+            return {'status':label+' required: select its column and fill in the value'}
     sig=certificate_signature(record,template,marker,engine)
     previous=previous or {}
     if previous.get('signature')==sig and Path(previous.get('pdf','')).is_file(): return previous

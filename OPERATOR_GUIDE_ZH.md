@@ -157,7 +157,9 @@ py -m venv .venv
 
 感谢状原流程保留：选择 **Name column**、**Attendance date column**、**Certificate number column**。PPTX 可编辑标记为 `Name`、`Date No`、`Cert No`，支持跨文字 runs 的标记。感谢状编号来自选定列，`0007` 等编号请以文本保存，不会自动编造编号。
 
-模板需要的日期或编号缺失时不会输出不完整证书。姓名、日期、编号、模板变化会使旧缓存失效。**WhatsApp Share** 打开该人的聊天，PDF 附件和最终发送仍须人工完成。已退休 donor 数据留存，但不生成 donor 感谢状。
+每张感谢状从同一人员所在行读取姓名、出席日期、编号。三个模板标记或行内值有任何缺失，都不会输出证书或沿用旧 PDF。请在源表中为各报名填写正确的独立编号；程序不会自动编造编号。同一天参加活动的人，日期可以相同。姓名、日期、编号、模板变化会使旧缓存失效。**WhatsApp Share** 打开该人的聊天，PDF 附件和最终发送仍须人工完成。已退休 donor 数据留存，但不生成 donor 感谢状。
+
+**修复旧版日期／编号全部相同：**旧自带 PPTX 中的 `July 18, 2026` 和 `26/06/3705` 是固定文字。更新本次的 `templates/volunteer_template.pptx`；若使用自己的模板，把这两处对应内容改为可编辑的 `Date No` 和 `Cert No`，保留旁边的标签与设计。在 **Settings → Certificate Templates** 选择修正后的模板，确认表格上方三个栏目选择正确，再点 **More Actions → Generate / Retry PDFs**。保留原 Excel 与 `data` 文件夹，不需要清空资料。没有这些标记的旧模板会显示明确错误，不再默默输出固定值。
 
 ## 8. 家庭 PDF 预览与确认邮件
 

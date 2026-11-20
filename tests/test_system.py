@@ -94,7 +94,8 @@ class CertificateTests(unittest.TestCase):
         out=self.root/'out.pptx';cert.fill_template(self.path,out,{'NAME':'Alice'})
         self.assertEqual(Presentation(out).slides[0].shapes[0].table.cell(0,0).text,'Alice')
     def test_cache_and_regeneration(self):
-        rec={'id':'abc','name':'Alice','type':'volunteer','date':'2026'};cfg={'volunteer':{'path':str(self.path)}}
+        prs=Presentation(self.path);prs.slides[0].shapes[0].text_frame.paragraphs[0].add_run().text=' / Cert No';prs.save(self.path)
+        rec={'id':'abc','name':'Alice','type':'volunteer','date':'2026','cert_no':'0001'};cfg={'volunteer':{'path':str(self.path)}}
         def convert(pptx,out,*args):Path(out).write_bytes(b'%PDF-1.4\nmock')
         with patch('certificates.convert_pdf',side_effect=convert) as mock:
             first=cert.generate_one(rec,cfg,self.root/'output');second=cert.generate_one(rec,cfg,self.root/'output',first)
@@ -123,6 +124,38 @@ class CertificateTests(unittest.TestCase):
             rec['cert_no']='';self.assertIn('Certificate number required',cert.generate_one(rec,cfg,self.root)['status'])
             rec['date']='';self.assertIn('Attendance date required',cert.generate_one(rec,cfg,self.root)['status']);self.assertEqual(converter.call_count,2)
         self.assertEqual(cert.generate_one({'type':'donor','name':'Legacy'},{},self.root)['status'],'Not applicable')
+
+    def test_fixed_template_values_block_export_and_cached_pdf(self):
+        rec={'id':'abc','name':'Alice','type':'volunteer','date':'2026-12-01','cert_no':'0001'}
+        cfg={'volunteer':{'path':str(self.path)}}
+        for content,missing in [('Name / July 18, 2026 / 26/06/3705','Date No'),
+                                ('Name / Date No / 26/06/3705','Cert No'),
+                                ('Alice / Date No / Cert No','Name')]:
+            with self.subTest(content=content):
+                prs=Presentation();slide=prs.slides.add_slide(prs.slide_layouts[6])
+                slide.shapes.add_textbox(0,0,Inches(9),Inches(2)).text=content;prs.save(self.path)
+                old_pdf=self.root/'old.pdf';old_pdf.write_bytes(b'%PDF-1.4 old')
+                previous={'status':'PDF ready','pdf':str(old_pdf),
+                          'signature':cert.certificate_signature(rec,self.path,'Name','auto')}
+                with patch('certificates.convert_pdf') as converter:
+                    result=cert.generate_one(rec,cfg,self.root,previous)
+                    self.assertIn('Template missing '+missing,result['status'])
+                    self.assertNotIn('pdf',result);converter.assert_not_called()
+
+    def test_shipped_template_has_all_per_person_markers(self):
+        source=Path(__file__).resolve().parents[1]/'templates/volunteer_template.pptx'
+        cert.validate_template(source,'Name')
+        original=source.read_bytes()
+        for i,(name,date,number) in enumerate([
+                ('Alice Example','2026-11-20','0007'),('Bob Example','2026-11-21','0008')]):
+            output=self.root/f'person-{i}.pptx'
+            cert.fill_template(source,output,{'NAME':name,'DATE':date,'CERT_NO':number})
+            contents='\n'.join(p.text for p in cert.all_paragraphs(Presentation(output)))
+            for expected in (name,date,number,'Date of service:','Certificate No.'):
+                self.assertIn(expected,contents)
+            for stale in ('July 18, 2026','26/06/3705','Date No','Cert No'):
+                self.assertNotIn(stale,contents)
+        self.assertEqual(source.read_bytes(),original)
 
     def test_whatsapp_and_aliases(self):
         self.assertTrue(cert.whatsapp_url('012-3456789','A').startswith('https://wa.me/60123456789?'))

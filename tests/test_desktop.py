@@ -119,20 +119,30 @@ class DesktopTests(unittest.TestCase):
         import time
         w=self.window
         h,_=w.store.table('Records')
-        w.store.save_rows('Records',h,[{'Participant Name':'Example Volunteer','Type':'volunteer','Date':'2026-11-02'}, {'Participant Name':'Example Donor','Type':'donor','Date':'2026-11-02'}, {'Participant Name':'Example Family','Type':'beneficiary'}])
+        h+=['Printed Name','Attend Date','Cert No']
+        people=[('Alice Example','2026-11-20','0007'),('Bob Example','2026-11-21','0008'),('Alice Example','2026-11-22','0009')]
+        w.store.save_rows('Records',h,[{'Participant Name':'Unmapped Name','Type':'volunteer','Date':'WRONG DATE','Certificate Number':'WRONG NUMBER',
+            'Printed Name':name,'Attend Date':date,'Cert No':number} for name,date,number in people]+
+            [{'Participant Name':'Example Donor','Type':'donor'},{'Participant Name':'Example Family','Type':'beneficiary'}])
         w.load_table('Records');w.cfg.update(engine='libreoffice',soffice=os.environ['FOODBANK_TEST_SOFFICE'],auto_pdf=True)
+        w.cfg['mapping'][w.mapping_key()]={'name':'Printed Name','date':'Attend Date','cert_no':'Cert No'}
         w.cfg['templates']={'volunteer':{'path':str(main.ROOT/'templates/volunteer_template.pptx'),'marker':'auto'}}
         w.auto_generate()
-        deadline=time.monotonic()+30
+        deadline=time.monotonic()+60
         while w.busy_pdf and time.monotonic()<deadline:pump(100)
         self.assertFalse(w.busy_pdf)
-        for row in w.rows[:1]:
+        for row,expected in zip(w.rows[:3],people):
             rec=w.record(row);entry=w.cache[w.cache_key(rec['id'])]
             self.assertEqual(entry['status'],'PDF ready',entry)
             import subprocess
             extracted=subprocess.check_output(['pdftotext',entry['pdf'],'-'],text=True)
-            self.assertIn(rec['name'],extracted)
-        self.assertEqual(len(list((self.root/'certificates').rglob('*.pdf'))),1)
+            for value in expected:self.assertIn(value,extracted)
+            for value in ('July 18, 2026','26/06/3705','WRONG DATE','WRONG NUMBER','Unmapped Name'):
+                self.assertNotIn(value,extracted)
+            for other in people:
+                if other!=expected:
+                    self.assertNotIn(other[1],extracted);self.assertNotIn(other[2],extracted)
+        self.assertEqual(len(list((self.root/'certificates').rglob('*.pdf'))),3)
         with patch('main.webbrowser.open') as browser,patch('main.QDesktopServices.openUrl') as folder:
             w.share(0);self.assertEqual(browser.call_count,1);self.assertEqual(folder.call_count,1)
             self.assertTrue(QApplication.clipboard().text().endswith('.pdf'))
@@ -145,6 +155,21 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(mapping.value()['name'],'Participant Name');mapping.close()
         template=main.TemplateDialog(w.cfg,w);self.assertIn('volunteer',template.value()['templates']);template.close()
         google=main.GoogleDialog({},w);self.assertEqual(len(google.panels),2);self.assertEqual(google.panels[0].kind,'volunteer');google.close()
+
+    def test_template_dialog_rejects_fixed_date_and_number(self):
+        from pptx import Presentation
+        from pptx.util import Inches
+        path=self.root/'fixed.pptx';prs=Presentation();slide=prs.slides.add_slide(prs.slide_layouts[6])
+        slide.shapes.add_textbox(0,0,Inches(6),Inches(2)).text='Name / July 18, 2026 / 26/06/3705';prs.save(path)
+        dialog=main.TemplateDialog({'templates':{'volunteer':{'path':str(path)}}},self.window)
+        with patch('main.QMessageBox.warning') as warning,patch.object(dialog,'accept') as accept:
+            dialog.validate();accept.assert_not_called();self.assertIn('Template missing Date No',warning.call_args.args[2])
+        dialog.close()
+
+    def test_attend_date_and_cert_no_column_aliases(self):
+        mapping=main.MappingDialog(['Name','Attend Date','Cert No'],{},self.window)
+        self.assertEqual(mapping.value()['date'],'Attend Date')
+        self.assertEqual(mapping.value()['cert_no'],'Cert No');mapping.close()
     def test_sync_callback_no_duplicate(self):
         w=self.window
         cfg={'sources':[{'destination':'Google Volunteers'}]};w.cfg['google']=cfg
